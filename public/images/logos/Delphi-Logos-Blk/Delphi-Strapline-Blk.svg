@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 48" width="320" height="48">
+  <defs>
+    <style>
+      @font-face {
+        font-family: 'Instrument Serif';
+        src: url('/Instrument_Serif/InstrumentSerif-Regular.ttf') format('truetype');
+        font-weight: 400;
+        font-style: normal;
+      }
+    </style>
+  </defs>
+  <text x="160" y="34" text-anchor="middle" font-family="Instrument Serif" font-size="28" font-weight="400" fill="#1a1a1a">Make Your Market</text>
+</svg>

@@ -1,0 +1,17 @@
+{
+  "name": "Delphi duotone",
+  "description": "Default vertical-blinds effect for brand imagery (full colour + strapline-friendly defaults)",
+  "halftoneCellSize": 4,
+  "halftoneDotScale": 0.5,
+  "stripeGap": 3,
+  "useOriginalColors": true,
+  "stripeEndRadius": 12,
+  "luminanceContrast": 1.1,
+  "minRunLength": 0,
+  "edgeMaskStrength": 0,
+  "sourceSaturation": 1,
+  "stripeInnerShadow": 0,
+  "colorShadow": "#240908",
+  "colorHighlight": "#ffa6a6",
+  "angle": 0
+}
