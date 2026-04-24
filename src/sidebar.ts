@@ -1,6 +1,9 @@
 import { ROUTES, type Route } from './router';
 import { toggleTheme } from './theme';
 
+// Parked for future reintroduction of side navigation.
+// The current app entry mounts an assets-only flow and does not import this module.
+
 const LOGO_SVG = `<svg class="sidebar-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" style="color: var(--fg);">
   <path d="M128.35,14.96h-56.69c-31.31,0-56.69,25.38-56.69,56.69v56.69c0,31.31,25.38,56.69,56.69,56.69h56.69c31.31,0,56.69-25.38,56.69-56.69v-56.69c0-31.31-25.38-56.69-56.69-56.69Z" fill="none" stroke="currentColor" stroke-width="3"/>
   <rect class="bar-left" x="33.07" y="98.59" width="62.37" height="64.43" rx="27.63" ry="27.63" fill="none" stroke="currentColor" stroke-width="3"/>

@@ -1,6 +1,9 @@
 import { createDelphiImageryPanel, fetchDelphiEffectConfig } from './imagery-delphi';
 import { overlayPadding, isMobile } from '../responsive';
 
+// Parked for possible future reintroduction of Creator Tools routing.
+// This module is currently not mounted by the app entrypoint.
+
 const CREATOR_TOOLS = [
   { id: 'imagery', name: 'Image Generator', category: 'Creator Tools' },
 ] as const;

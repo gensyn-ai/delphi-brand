@@ -1,4 +1,5 @@
 import { overlayPadding, isMobile } from '../responsive';
+import { createDelphiImageryPanel, fetchDelphiEffectConfig } from './imagery-delphi';
 
 interface AssetStar {
   id: string;
@@ -7,9 +8,10 @@ interface AssetStar {
 }
 
 const ASSET_STARS: AssetStar[] = [
-  { id: 'logos',   name: 'Logos',   category: 'Brand Assets' },
-  { id: 'type',    name: 'Type',    category: 'Brand Assets' },
-  { id: 'palette', name: 'Palette', category: 'Brand Assets' },
+  { id: 'logos',   name: 'Logos',   category: 'Delphi logo set' },
+  { id: 'type',    name: 'Type',    category: 'Links to primary Delphi typefaces' },
+  { id: 'palette', name: 'Palette', category: 'Delphi colourways values' },
+  { id: 'images',  name: 'Images',  category: 'Delphi image library and bespoke image generator' },
 ];
 
 let detailOverlay: HTMLDivElement | null = null;
@@ -20,6 +22,13 @@ interface PaletteEntry {
   rgb: string;
   cmyk: string;
 }
+
+interface LibraryImageItem {
+  category: string;
+  file: string;
+}
+
+type LibraryLogoOption = 'none' | 'lockup' | 'logotype' | 'symbol' | 'strapline';
 
 const PALETTE_COLORS: PaletteEntry[] = [
   { hex: '#EFEFEB', rgb: '239, 239, 235', cmyk: '0, 0, 2, 6' },
@@ -47,6 +56,59 @@ const UI_PALETTE: { name: string; hex: string }[] = [
   { name: 'Card Stroke', hex: '#CCCCCC' },
   { name: 'Divider Stroke', hex: '#999999' },
 ];
+
+const IMAGE_LIBRARY_CATEGORIES = [
+  'Creators',
+  'Crypto:Web3',
+  'Culture',
+  'Economics',
+  'General',
+  'Politics',
+  'Sports',
+  'Tech',
+  'Weather',
+] as const;
+
+const IMAGE_LIBRARY_FILES: Record<(typeof IMAGE_LIBRARY_CATEGORIES)[number], string[]> = {
+  Creators: ['delphi-creator-01.png', 'delphi-creator-02.png'],
+  'Crypto:Web3': [],
+  Culture: [],
+  Economics: [],
+  General: [],
+  Politics: [],
+  Sports: ['delphi-sport-02.png', 'delphi-sports-01.png'],
+  Tech: ['delphi-rocket.png', 'delphi-satellite.png', 'delphi-screens.png', 'delphi-technology.png'],
+  Weather: ['delphi-weather-01.png', 'delphi-weather-03.png'],
+};
+
+const IMAGE_LIBRARY_ITEMS: LibraryImageItem[] = IMAGE_LIBRARY_CATEGORIES.flatMap((category) =>
+  IMAGE_LIBRARY_FILES[category].map((file) => ({ category, file })),
+);
+
+const LIBRARY_LOGO_OPTIONS: Array<{ id: LibraryLogoOption; label: string }> = [
+  { id: 'none', label: 'None' },
+  { id: 'lockup', label: 'Logo lockup' },
+  { id: 'logotype', label: 'Logotype' },
+  { id: 'symbol', label: 'Symbol only' },
+  { id: 'strapline', label: 'Make Your Market strapline' },
+];
+
+const WHITE_LOGO_FILES: Record<Exclude<LibraryLogoOption, 'none'>, string> = {
+  lockup: 'Delphi-logo-set_delphi-logo-lockup-wht.svg',
+  logotype: 'Delphi-logo-set_delphi-logotype-wht.svg',
+  symbol: 'Delphi-Symbol-Wht.svg',
+  strapline: 'Delphi-Strapline-Wht.svg',
+};
+
+function labelFromFilename(fileName: string): string {
+  return fileName
+    .replace(/\.[^.]+$/, '')
+    .replace(/^delphi-?/i, '')
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
 
 function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLDivElement {
   const overlay = document.createElement('div');
@@ -270,6 +332,522 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
     section.appendChild(fragmentBlock);
 
     inner.appendChild(section);
+  } else if (starId === 'images') {
+    const tabBorder = 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.12)';
+    const tabBar = document.createElement('div');
+    tabBar.style.cssText = `
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid ${tabBorder};
+    `;
+
+    const panel = document.createElement('div');
+    panel.style.cssText = `
+      width: 100%;
+      min-height: 220px;
+    `;
+
+    const tabStyle = (active: boolean) => `
+      padding: 6px 12px;
+      font-family: 'Fragment Mono', monospace;
+      font-size: 8pt;
+      color: var(--fg);
+      opacity: ${active ? 0.85 : 0.45};
+      background: ${active ? 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.04)' : 'none'};
+      border: none;
+      border-bottom: 2px solid ${active ? 'var(--fg)' : 'transparent'};
+      margin-bottom: -1px;
+      cursor: pointer;
+      border-radius: 4px 4px 0 0;
+      transition: opacity 0.2s ease, background 0.2s ease;
+    `;
+
+    let activeTab: 'library' | 'generator' = 'library';
+    const tabs = [
+      { id: 'library', label: 'Library' },
+      { id: 'generator', label: 'Generator' },
+    ] as const;
+    const tabButtons: HTMLButtonElement[] = [];
+
+    const renderImagesTab = (): void => {
+      panel.innerHTML = '';
+      if (activeTab === 'library') {
+        const base = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '');
+        const selectedCategories = new Set<string>();
+        let selectedLogo: LibraryLogoOption = 'none';
+
+        const libraryWrap = document.createElement('div');
+        libraryWrap.style.cssText = `
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        `;
+
+        const controlsWrap = document.createElement('div');
+        controlsWrap.style.cssText = `
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px;
+          align-items: start;
+        `;
+
+        const chipsColumn = document.createElement('div');
+        chipsColumn.style.cssText = `
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        `;
+
+        const chipsLabel = document.createElement('p');
+        chipsLabel.textContent = 'Filter images';
+        chipsLabel.style.cssText = `
+          margin: 0;
+          font-family: 'Fragment Mono', monospace;
+          font-size: 8pt;
+          color: var(--fg);
+          opacity: 0.55;
+        `;
+
+        const chipRow = document.createElement('div');
+        chipRow.style.cssText = `
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        `;
+
+        const chipStyle = (active: boolean) => `
+          border: 1px solid rgba(var(--fg-r), var(--fg-g), var(--fg-b), ${active ? '0.3' : '0.15'});
+          background: ${active ? 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08)' : 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.02)'};
+          color: var(--fg);
+          opacity: ${active ? '0.9' : '0.65'};
+          border-radius: 999px;
+          padding: 6px 12px;
+          font-family: 'Fragment Mono', monospace;
+          font-size: 8pt;
+          cursor: pointer;
+          transition: opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+        `;
+
+        const allChip = document.createElement('button');
+        allChip.type = 'button';
+        allChip.textContent = 'All';
+        chipRow.appendChild(allChip);
+
+        const categoryChips = new Map<string, HTMLButtonElement>();
+        for (const category of IMAGE_LIBRARY_CATEGORIES) {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.textContent = category;
+          categoryChips.set(category, chip);
+          chipRow.appendChild(chip);
+        }
+
+        const logoColumn = document.createElement('div');
+        logoColumn.style.cssText = `
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          border-left: 1px solid ${tabBorder};
+          padding-left: 16px;
+        `;
+
+        const logoLabel = document.createElement('p');
+        logoLabel.textContent = 'Add a graphic';
+        logoLabel.style.cssText = `
+          margin: 0;
+          font-family: 'Fragment Mono', monospace;
+          font-size: 8pt;
+          color: var(--fg);
+          opacity: 0.55;
+        `;
+        logoColumn.appendChild(logoLabel);
+
+        const logoOptionsWrap = document.createElement('div');
+        logoOptionsWrap.style.cssText = `
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        `;
+        logoColumn.appendChild(logoOptionsWrap);
+
+        const logoOptionButtons = new Map<LibraryLogoOption, HTMLButtonElement>();
+        for (const option of LIBRARY_LOGO_OPTIONS) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = option.label;
+          logoOptionButtons.set(option.id, btn);
+          logoOptionsWrap.appendChild(btn);
+        }
+
+        const grid = document.createElement('div');
+        grid.style.cssText = `
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+          gap: 14px;
+        `;
+
+        const emptyState = document.createElement('p');
+        emptyState.textContent = 'No images match this filter yet.';
+        emptyState.style.cssText = `
+          display: none;
+          margin: 0;
+          border: 1px dashed ${tabBorder};
+          border-radius: 10px;
+          padding: 18px;
+          background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.02);
+          font-family: 'Fragment Mono', monospace;
+          font-size: 8.5pt;
+          color: var(--fg);
+          opacity: 0.55;
+        `;
+
+        const getLibraryUrl = (category: string, file: string): string =>
+          `${base}/images/Images-ready/${encodeURIComponent(category)}/${encodeURIComponent(file)}`;
+
+        const getWhiteLogoUrl = (logo: Exclude<LibraryLogoOption, 'none'>): string =>
+          `${base}/images/logos/Delphi-Logos-Wht/${encodeURIComponent(WHITE_LOGO_FILES[logo])}`;
+
+        const logoChipStyle = (active: boolean) => `
+          border: 1px solid rgba(var(--fg-r), var(--fg-g), var(--fg-b), ${active ? '0.3' : '0.15'});
+          background: ${active ? 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08)' : 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.02)'};
+          color: var(--fg);
+          opacity: ${active ? '0.9' : '0.65'};
+          border-radius: 999px;
+          padding: 6px 12px;
+          text-align: center;
+          font-family: 'Fragment Mono', monospace;
+          font-size: 8pt;
+          cursor: pointer;
+          transition: opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+        `;
+
+        const loadImageElement = (src: string): Promise<HTMLImageElement> =>
+          new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+            img.src = src;
+          });
+
+        const PREVIEW_ASPECT = 4 / 3;
+
+        const drawPreviewCrop = (ctx: CanvasRenderingContext2D, img: HTMLImageElement): void => {
+          const srcW = img.naturalWidth;
+          const srcH = img.naturalHeight;
+          const srcAspect = srcW / srcH;
+          let sx = 0;
+          let sy = 0;
+          let sw = srcW;
+          let sh = srcH;
+          if (srcAspect > PREVIEW_ASPECT) {
+            sw = Math.round(srcH * PREVIEW_ASPECT);
+            sx = Math.round((srcW - sw) / 2);
+          } else if (srcAspect < PREVIEW_ASPECT) {
+            sh = Math.round(srcW / PREVIEW_ASPECT);
+            sy = Math.round((srcH - sh) / 2);
+          }
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, ctx.canvas.width, ctx.canvas.height);
+        };
+
+        const createPreviewCropCanvas = (img: HTMLImageElement): HTMLCanvasElement => {
+          const srcW = img.naturalWidth;
+          const srcH = img.naturalHeight;
+          const srcAspect = srcW / srcH;
+          let outW = srcW;
+          let outH = srcH;
+          if (srcAspect > PREVIEW_ASPECT) {
+            outW = Math.round(srcH * PREVIEW_ASPECT);
+          } else if (srcAspect < PREVIEW_ASPECT) {
+            outH = Math.round(srcW / PREVIEW_ASPECT);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, outW);
+          canvas.height = Math.max(1, outH);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return canvas;
+          drawPreviewCrop(ctx, img);
+          return canvas;
+        };
+
+        const triggerPngDownload = (canvas: HTMLCanvasElement, fileName: string): void => {
+          canvas.toBlob((blob) => {
+            if (!blob) return;
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = fileName.replace(/\.[^.]+$/, '') + '.png';
+            link.click();
+            URL.revokeObjectURL(objectUrl);
+          }, 'image/png');
+        };
+
+        const downloadCompositedWithLogo = async (
+          imageUrl: string,
+          fileName: string,
+          logoChoice: Exclude<LibraryLogoOption, 'none'>,
+        ): Promise<void> => {
+          const [baseImg, logoImg] = await Promise.all([
+            loadImageElement(imageUrl),
+            loadImageElement(getWhiteLogoUrl(logoChoice)),
+          ]);
+          const canvas = createPreviewCropCanvas(baseImg);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          const ratio = logoChoice === 'symbol'
+            ? 0.2
+            : logoChoice === 'logotype'
+              ? 0.48
+              : logoChoice === 'strapline'
+                ? 1.08
+                : 0.44;
+          const logoW = Math.max(1, Math.round(canvas.width * ratio));
+          const logoH = Math.max(1, Math.round((logoImg.naturalHeight / logoImg.naturalWidth) * logoW));
+          const x = Math.round((canvas.width - logoW) / 2);
+          const y = Math.round((canvas.height - logoH) / 2);
+          ctx.drawImage(logoImg, x, y, logoW, logoH);
+          triggerPngDownload(canvas, fileName.replace(/\.[^.]+$/, '') + '-logo.png');
+        };
+
+        const renderGrid = (): void => {
+          grid.innerHTML = '';
+          const items = selectedCategories.size === 0
+            ? IMAGE_LIBRARY_ITEMS
+            : IMAGE_LIBRARY_ITEMS.filter((item) => selectedCategories.has(item.category));
+
+          for (const item of items) {
+            const card = document.createElement('div');
+            card.style.cssText = `
+              border: 1px solid ${tabBorder};
+              border-radius: 10px;
+              overflow: hidden;
+              background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.02);
+              display: flex;
+              flex-direction: column;
+            `;
+
+            const imageWrap = document.createElement('div');
+            imageWrap.style.cssText = `
+              position: relative;
+              width: 100%;
+              aspect-ratio: 4 / 3;
+              overflow: hidden;
+              background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.04);
+            `;
+
+            const image = document.createElement('img');
+            image.src = getLibraryUrl(item.category, item.file);
+            image.alt = labelFromFilename(item.file);
+            image.loading = 'lazy';
+            image.style.cssText = `
+              width: 100%;
+              height: 100%;
+              object-fit: cover;
+              display: block;
+            `;
+            imageWrap.appendChild(image);
+
+            if (selectedLogo !== 'none') {
+              const overlayLogo = document.createElement('img');
+              overlayLogo.src = getWhiteLogoUrl(selectedLogo);
+              overlayLogo.alt = `${selectedLogo} overlay`;
+              const widthPct = selectedLogo === 'symbol'
+                ? '22%'
+                : selectedLogo === 'logotype'
+                  ? '52%'
+                  : selectedLogo === 'strapline'
+                    ? '111%'
+                    : '46%';
+              overlayLogo.style.cssText = `
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                transform: translate(-50%, -50%);
+                width: ${widthPct};
+                height: auto;
+                pointer-events: none;
+                user-select: none;
+              `;
+              imageWrap.appendChild(overlayLogo);
+            }
+
+            card.appendChild(imageWrap);
+
+            const body = document.createElement('div');
+            body.style.cssText = `
+              display: flex;
+              flex-direction: column;
+              gap: 8px;
+              padding: 10px;
+            `;
+
+            const caption = document.createElement('div');
+            caption.textContent = labelFromFilename(item.file);
+            caption.style.cssText = `
+              font-family: 'Instrument Serif', serif;
+              font-size: 10pt;
+              color: var(--fg);
+              opacity: 0.85;
+            `;
+
+            const meta = document.createElement('div');
+            meta.textContent = item.category;
+            meta.style.cssText = `
+              font-family: 'Fragment Mono', monospace;
+              font-size: 7.5pt;
+              color: var(--fg);
+              opacity: 0.45;
+            `;
+
+            const download = document.createElement('button');
+            download.type = 'button';
+            download.textContent = 'Download';
+            download.style.cssText = `
+              align-self: flex-start;
+              border: 1px solid rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.2);
+              border-radius: 999px;
+              padding: 3px 10px;
+              font-family: 'Fragment Mono', monospace;
+              font-size: 7.5pt;
+              color: var(--fg);
+              background: transparent;
+              opacity: 0.75;
+              cursor: pointer;
+            `;
+            download.addEventListener('click', async () => {
+              const imageUrl = getLibraryUrl(item.category, item.file);
+              if (selectedLogo === 'none') {
+                try {
+                  const baseImg = await loadImageElement(imageUrl);
+                  const canvas = createPreviewCropCanvas(baseImg);
+                  triggerPngDownload(canvas, item.file);
+                } catch {
+                  const link = document.createElement('a');
+                  link.href = imageUrl;
+                  link.download = item.file;
+                  link.click();
+                }
+                return;
+              }
+              try {
+                await downloadCompositedWithLogo(imageUrl, item.file, selectedLogo);
+              } catch {
+                const link = document.createElement('a');
+                link.href = imageUrl;
+                link.download = item.file;
+                link.click();
+              }
+            });
+
+            body.append(caption, meta, download);
+            card.appendChild(body);
+            grid.appendChild(card);
+          }
+
+          emptyState.style.display = items.length === 0 ? 'block' : 'none';
+        };
+
+        const refreshChipStyles = (): void => {
+          const allActive = selectedCategories.size === 0;
+          allChip.style.cssText = chipStyle(allActive);
+          for (const [category, chip] of categoryChips) {
+            chip.style.cssText = chipStyle(selectedCategories.has(category));
+          }
+          renderGrid();
+        };
+
+        const refreshLogoStyles = (): void => {
+          for (const [id, btn] of logoOptionButtons) {
+            btn.style.cssText = logoChipStyle(id === selectedLogo);
+          }
+        };
+
+        allChip.addEventListener('click', () => {
+          selectedCategories.clear();
+          refreshChipStyles();
+        });
+
+        for (const [category, chip] of categoryChips) {
+          chip.addEventListener('click', () => {
+            if (selectedCategories.has(category)) {
+              selectedCategories.delete(category);
+            } else {
+              selectedCategories.add(category);
+            }
+            refreshChipStyles();
+          });
+        }
+
+        for (const [id, btn] of logoOptionButtons) {
+          btn.addEventListener('click', () => {
+            selectedLogo = id;
+            refreshLogoStyles();
+            renderGrid();
+          });
+        }
+
+        chipsColumn.append(chipsLabel, chipRow);
+        controlsWrap.append(chipsColumn, logoColumn);
+        libraryWrap.append(controlsWrap, grid, emptyState);
+        panel.appendChild(libraryWrap);
+        refreshChipStyles();
+        refreshLogoStyles();
+        return;
+      }
+
+      const generatorWrap = document.createElement('div');
+      generatorWrap.style.cssText = `
+        width: 100%;
+        min-height: 520px;
+        border: 1px solid ${tabBorder};
+        border-radius: 12px;
+        padding: 12px;
+        box-sizing: border-box;
+        overflow: hidden;
+      `;
+      const loadingEl = document.createElement('p');
+      loadingEl.textContent = 'Loading generator...';
+      loadingEl.style.cssText = `
+        font-family: 'Fragment Mono', monospace;
+        font-size: 9pt;
+        color: var(--fg);
+        opacity: 0.45;
+        padding: 8px;
+      `;
+      generatorWrap.appendChild(loadingEl);
+      panel.appendChild(generatorWrap);
+
+      const baseUrl = window.location.origin + (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '');
+      fetchDelphiEffectConfig(baseUrl).then((config) => {
+        loadingEl.remove();
+        createDelphiImageryPanel(generatorWrap, config);
+      }).catch(() => {
+        loadingEl.remove();
+        createDelphiImageryPanel(generatorWrap, null);
+      });
+    };
+
+    for (const tab of tabs) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = tab.label;
+      btn.style.cssText = tabStyle(tab.id === activeTab);
+      btn.addEventListener('click', () => {
+        activeTab = tab.id;
+        for (const tabBtn of tabButtons) {
+          const isActive = tabBtn.textContent?.toLowerCase() === activeTab;
+          tabBtn.style.cssText = tabStyle(Boolean(isActive));
+        }
+        renderImagesTab();
+      });
+      tabButtons.push(btn);
+      tabBar.appendChild(btn);
+    }
+
+    inner.appendChild(tabBar);
+    inner.appendChild(panel);
+    renderImagesTab();
   } else if (starId === 'ui-styling') {
     const tabBorder = 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.12)';
     const tabBar = document.createElement('div');
