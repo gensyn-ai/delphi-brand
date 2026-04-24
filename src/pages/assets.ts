@@ -131,7 +131,7 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
 
   const inner = document.createElement('div');
   inner.style.cssText = `
-    max-width: 680px;
+    max-width: 1100px;
     width: 100%;
     display: flex;
     flex-direction: column;

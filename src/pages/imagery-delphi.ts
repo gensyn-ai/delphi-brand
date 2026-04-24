@@ -1334,6 +1334,7 @@ export function createDelphiImageryPanel(
     justify-content: center;
     flex: 1 1 0;
     min-height: 200px;
+    max-height: ${mobileLayout ? 'min(38vh, 340px)' : 'min(56vh, 520px)'};
     position: relative;
     transition: border-color 0.2s ease, background 0.2s ease;
     cursor: pointer;
