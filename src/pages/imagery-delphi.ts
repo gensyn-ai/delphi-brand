@@ -108,7 +108,7 @@ function scaleGraphicsLayerLayout(
 
   layers.headline.x = Math.round(layers.headline.x * rx);
   layers.headline.y = Math.round(layers.headline.y * ry);
-  layers.headline.fontSize = Math.max(12, Math.min(72, Math.round(layers.headline.fontSize * ru)));
+  layers.headline.fontSize = Math.max(12, Math.min(240, Math.round(layers.headline.fontSize * ru)));
 
   layers.delphiLogo.x = Math.round(layers.delphiLogo.x * rx);
   layers.delphiLogo.y = Math.round(layers.delphiLogo.y * ry);
@@ -157,37 +157,54 @@ interface BrandLayerImages {
 const STRAPLINE_TRIM_WORK = document.createElement('canvas');
 
 /**
- * Bounding box of pixels with meaningful alpha so layout matches letterforms, not the full SVG frame.
+ * Bounding box of non-transparent pixels for layout; returns null → caller uses untrimmed full image.
+ * Wrapped in try/catch: getImageData can fail when the canvas is still "tainted" or in edge SVG cases.
  */
-function computeStraplineSourceTrim(img: HTMLImageElement): StraplineSourceTrim {
+function computeStraplineSourceTrim(img: HTMLImageElement): StraplineSourceTrim | null {
   const iw = img.naturalWidth;
   const ih = img.naturalHeight;
-  if (iw < 1 || ih < 1) return { sx: 0, sy: 0, sw: 1, sh: 1 };
-  STRAPLINE_TRIM_WORK.width = iw;
-  STRAPLINE_TRIM_WORK.height = ih;
-  const tctx = STRAPLINE_TRIM_WORK.getContext('2d', { willReadFrequently: true })!;
-  tctx.clearRect(0, 0, iw, ih);
-  tctx.drawImage(img, 0, 0);
-  const id = tctx.getImageData(0, 0, iw, ih);
-  const d = id.data;
-  const ALPHA = 10;
-  let minX = iw;
-  let minY = ih;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < ih; y++) {
-    const row = y * iw * 4;
-    for (let x = 0; x < iw; x++) {
-      if (d[row + x * 4 + 3] > ALPHA) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
+  if (iw < 1 || ih < 1) return null;
+  try {
+    STRAPLINE_TRIM_WORK.width = iw;
+    STRAPLINE_TRIM_WORK.height = ih;
+    const tctx = STRAPLINE_TRIM_WORK.getContext('2d', { willReadFrequently: true })!;
+    tctx.clearRect(0, 0, iw, ih);
+    tctx.drawImage(img, 0, 0);
+    const id = tctx.getImageData(0, 0, iw, ih);
+    const d = id.data;
+    const ALPHA = 1;
+    let minX = iw;
+    let minY = ih;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < ih; y++) {
+      const row = y * iw * 4;
+      for (let x = 0; x < iw; x++) {
+        if (d[row + x * 4 + 3] > ALPHA) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
       }
     }
+    if (maxX < minX) return { sx: 0, sy: 0, sw: iw, sh: ih };
+    const coreW = maxX - minX + 1;
+    const coreH = maxY - minY + 1;
+    if (coreW < 2 || coreH < 2) return { sx: 0, sy: 0, sw: iw, sh: ih };
+    // Loose padding: alpha bbox often sits inside anti-aliased strokes and trims descenders.
+    const padL = Math.max(6, Math.round(coreW * 0.03));
+    const padR = Math.max(14, Math.round(coreW * 0.06));
+    const padT = Math.max(4, Math.round(coreH * 0.08));
+    const padB = Math.max(14, Math.round(coreH * 0.22));
+    const sx = Math.max(0, minX - padL);
+    const sy = Math.max(0, minY - padT);
+    const sw = Math.min(iw - sx, maxX - minX + 1 + padL + padR);
+    const sh = Math.min(ih - sy, maxY - minY + 1 + padT + padB);
+    return { sx, sy, sw, sh };
+  } catch {
+    return null;
   }
-  if (maxX < minX) return { sx: 0, sy: 0, sw: iw, sh: ih };
-  return { sx: minX, sy: minY, sw: maxX - minX + 1, sh: maxY - minY + 1 };
 }
 
 function straplineDrawMetrics(
@@ -199,10 +216,14 @@ function straplineDrawMetrics(
   const iw = img.naturalWidth;
   const ih = img.naturalHeight;
   if (iw < 1 || ih < 1) return null;
-  const t = trim ?? { sx: 0, sy: 0, sw: iw, sh: ih };
+  const raw = trim ?? { sx: 0, sy: 0, sw: iw, sh: ih };
+  const sx = Math.max(0, Math.min(Math.floor(raw.sx), iw - 1));
+  const sy = Math.max(0, Math.min(Math.floor(raw.sy), ih - 1));
+  const sw = Math.max(1, Math.min(Math.ceil(raw.sw), iw - sx));
+  const sh = Math.max(1, Math.min(Math.ceil(raw.sh), ih - sy));
   const dw = layer.width;
-  const dh = (t.sh / t.sw) * dw;
-  return { sx: t.sx, sy: t.sy, sw: t.sw, sh: t.sh, dw, dh };
+  const dh = (sh / sw) * dw;
+  return { sx, sy, sw, sh, dw, dh };
 }
 
 function cloneCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
@@ -1042,7 +1063,9 @@ function clampGraphicsLayersToCanvasBounds(
 }
 
 /**
- * Draw optional graphics layers on top of the effect (user logo, strapline, Delphi logo, headline, …).
+ * Draw optional graphics layers on top of the effect.
+ * Painter order: earlier = underneath. Strapline is drawn after headline so a centred headline
+ * does not paint over the centred strapline.
  */
 function drawGraphicsLayers(
   ctx: CanvasRenderingContext2D,
@@ -1065,14 +1088,6 @@ function drawGraphicsLayers(
     const dh = img.naturalHeight * scale;
     ctx.drawImage(img, layers.delphiSymbol.x, layers.delphiSymbol.y, layers.delphiSymbol.width, dh);
   }
-  // Make Your Market strapline (cropped to letter alpha)
-  if (layers.strapline.enabled && brandImages.strapline && layers.strapline.width > 0) {
-    const img = brandImages.strapline;
-    const m = straplineDrawMetrics(layers.strapline, img, brandImages.straplineTrim);
-    if (m) {
-      ctx.drawImage(img, m.sx, m.sy, m.sw, m.sh, layers.strapline.x, layers.strapline.y, m.dw, m.dh);
-    }
-  }
   // Delphi logo
   if (layers.delphiLogo.enabled && brandImages.delphiLogo && layers.delphiLogo.width > 0) {
     const img = brandImages.delphiLogo;
@@ -1093,6 +1108,14 @@ function drawGraphicsLayers(
       if (lines[i]) ctx.fillText(lines[i], layers.headline.x, layers.headline.y + i * lineHeight);
     }
     ctx.textAlign = 'left';
+  }
+  // Make Your Market strapline (above headline when both share the default centre placement)
+  if (layers.strapline.enabled && brandImages.strapline && layers.strapline.width > 0) {
+    const img = brandImages.strapline;
+    const m = straplineDrawMetrics(layers.strapline, img, brandImages.straplineTrim);
+    if (m) {
+      ctx.drawImage(img, m.sx, m.sy, m.sw, m.sh, layers.strapline.x, layers.strapline.y, m.dw, m.dh);
+    }
   }
   // Market data overlay
   if (layers.marketData.enabled && layers.marketData.options.length > 0) {
@@ -1329,21 +1352,18 @@ function drawSelectionUI(
   ctx.strokeRect(rect.x - 1, rect.y - 1, rect.w + 2, rect.h + 2);
   ctx.setLineDash([]);
 
-  // Headline is resized only via the panel slider; no corner handles to avoid resizing the wrong layer
-  if (selectedLayer !== 'headline') {
-    const corners = [
-      { x: rect.x, y: rect.y },
-      { x: rect.x + rect.w, y: rect.y },
-      { x: rect.x, y: rect.y + rect.h },
-      { x: rect.x + rect.w, y: rect.y + rect.h },
-    ];
-    for (const c of corners) {
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(c.x - HANDLE_SIZE / 2, c.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-      ctx.strokeStyle = 'rgba(54, 124, 214, 0.9)';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(c.x - HANDLE_SIZE / 2, c.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-    }
+  const corners = [
+    { x: rect.x, y: rect.y },
+    { x: rect.x + rect.w, y: rect.y },
+    { x: rect.x, y: rect.y + rect.h },
+    { x: rect.x + rect.w, y: rect.y + rect.h },
+  ];
+  for (const c of corners) {
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(c.x - HANDLE_SIZE / 2, c.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+    ctx.strokeStyle = 'rgba(54, 124, 214, 0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(c.x - HANDLE_SIZE / 2, c.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
   }
   ctx.restore();
 }
@@ -1484,6 +1504,7 @@ export function createDelphiImageryPanel(
   initialConfig: DelphiEffectConfig | null = null
 ): void {
   const config = { ...mergeWithDefaults(initialConfig) };
+  config.useOriginalColors = true;
   const graphicsLayers = createDefaultGraphicsLayers();
   let delphiLogoImage: HTMLImageElement | null = null;
   const delphiLogoImg = new Image();
@@ -1550,6 +1571,8 @@ export function createDelphiImageryPanel(
   }
 
   const mobileLayout = isMobile();
+  /** Keeps preview area usable when the controls column is short (e.g. Market data tab). */
+  const previewWrapMinHeightCss = mobileLayout ? '200px' : 'clamp(260px, min(52vh, 480px), 520px)';
   const workshopRoot = document.createElement('div');
   /* Fill creator-tools shell: row stretches; only controls column scrolls. overflow:hidden avoids
    * nav chip overlapping canvas when flex would otherwise collapse this box. */
@@ -1596,7 +1619,7 @@ export function createDelphiImageryPanel(
     width: min(100%, 500px);
     max-width: 46%;
     min-width: 0;
-    min-height: 0;
+    min-height: clamp(260px, min(52vh, 480px), 520px);
     max-height: 100%;
     overflow: hidden;
     align-self: stretch;
@@ -1645,6 +1668,97 @@ export function createDelphiImageryPanel(
     -webkit-overflow-scrolling: touch;
   `;
 
+  type GeneratorControlsTabId = 'image-effect' | 'graphics' | 'market-data';
+  const generatorControlsTabs: Array<{ id: GeneratorControlsTabId; label: string }> = [
+    { id: 'image-effect', label: 'Image effect' },
+    { id: 'graphics', label: 'Graphics' },
+    { id: 'market-data', label: 'Market data' },
+  ];
+  let activeGeneratorControlsTab: GeneratorControlsTabId = 'image-effect';
+  const tabButtons = new Map<GeneratorControlsTabId, HTMLButtonElement>();
+  const tabPanels = new Map<GeneratorControlsTabId, HTMLDivElement>();
+
+  const controlsTabNav = document.createElement('div');
+  controlsTabNav.setAttribute('role', 'tablist');
+  controlsTabNav.setAttribute('aria-label', 'Image generator controls sections');
+  controlsTabNav.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg);
+    padding: 2px 0 8px;
+  `;
+
+  const controlsTabBody = document.createElement('div');
+  controlsTabBody.style.cssText = 'display: flex; flex-direction: column; gap: 0;';
+
+  const imageEffectPanel = document.createElement('div');
+  imageEffectPanel.setAttribute('role', 'tabpanel');
+  imageEffectPanel.style.cssText = 'display: flex; flex-direction: column;';
+  tabPanels.set('image-effect', imageEffectPanel);
+
+  const graphicsPanel = document.createElement('div');
+  graphicsPanel.setAttribute('role', 'tabpanel');
+  graphicsPanel.style.cssText = 'display: none; flex-direction: column;';
+  tabPanels.set('graphics', graphicsPanel);
+
+  const marketDataPanel = document.createElement('div');
+  marketDataPanel.setAttribute('role', 'tabpanel');
+  marketDataPanel.style.cssText = 'display: none; flex-direction: column;';
+  tabPanels.set('market-data', marketDataPanel);
+
+  const updateControlsTabs = (): void => {
+    for (const tab of generatorControlsTabs) {
+      const btn = tabButtons.get(tab.id);
+      const panel = tabPanels.get(tab.id);
+      if (!btn || !panel) continue;
+      const selected = tab.id === activeGeneratorControlsTab;
+      btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+      btn.style.opacity = selected ? '1' : '0.62';
+      btn.style.background = selected
+        ? 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.18)'
+        : 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08)';
+      panel.style.display = selected ? 'flex' : 'none';
+    }
+    updateControlsColumnScrollFade();
+  };
+
+  for (const tab of generatorControlsTabs) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = tab.label;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', tab.id === activeGeneratorControlsTab ? 'true' : 'false');
+    btn.style.cssText = `
+      font-family: 'Fragment Mono', monospace;
+      font-size: 8pt;
+      color: var(--fg);
+      border: ${BORDER};
+      border-radius: 999px;
+      padding: 6px 12px;
+      cursor: pointer;
+      transition: background 0.16s ease, opacity 0.16s ease;
+      background: ${tab.id === activeGeneratorControlsTab
+        ? 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.18)'
+        : 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08)'};
+      opacity: ${tab.id === activeGeneratorControlsTab ? '1' : '0.62'};
+    `;
+    btn.addEventListener('click', () => {
+      if (activeGeneratorControlsTab === tab.id) return;
+      activeGeneratorControlsTab = tab.id;
+      updateControlsTabs();
+    });
+    tabButtons.set(tab.id, btn);
+    controlsTabNav.appendChild(btn);
+  }
+
+  controlsTabBody.append(imageEffectPanel, graphicsPanel, marketDataPanel);
+  controlsColumn.append(controlsTabNav, controlsTabBody);
+
   function isImageFile(file: File): boolean {
     return file.type.startsWith('image/');
   }
@@ -1661,7 +1775,7 @@ export function createDelphiImageryPanel(
     align-items: stretch;
     justify-content: center;
     flex: 1 1 0;
-    min-height: 200px;
+    min-height: ${previewWrapMinHeightCss};
     max-height: ${mobileLayout ? 'min(38vh, 340px)' : 'min(56vh, 520px)'};
     position: relative;
     transition: border-color 0.2s ease, background 0.2s ease;
@@ -1896,9 +2010,12 @@ export function createDelphiImageryPanel(
     const innerPad = PREVIEW_CORNER_RADIUS * 2;
     const innerW = Math.max(1, Math.floor(previewInner.clientWidth - innerPad - 3));
     if (innerW < 8) return;
-    const innerH = previewInner.clientHeight - innerPad;
+    /** Always constrain by height when inner box has any height — avoids clipping when a small
+     * transient innerH (≤24px) previously forced Infinity here and scaled only by width, making the
+     * CSS canvas taller than overflow:hidden ancestors (severity varies by output preset / flex). */
+    const innerH = Math.max(0, previewInner.clientHeight - innerPad);
     const scaleW = innerW / pw;
-    const scaleH = innerH > 24 ? innerH / ph : Number.POSITIVE_INFINITY;
+    const scaleH = innerH > 0 ? innerH / ph : Number.POSITIVE_INFINITY;
     const scale = Math.min(1, scaleW, scaleH);
     const dw = Math.max(1, Math.floor(pw * scale));
     const dh = Math.max(1, Math.floor(ph * scale));
@@ -1926,7 +2043,7 @@ export function createDelphiImageryPanel(
       previewCanvas.style.height = '';
       previewControlsRow.style.display = 'none';
       previewWrap.style.cursor = 'pointer';
-      previewWrap.style.minHeight = '200px';
+      previewWrap.style.minHeight = previewWrapMinHeightCss;
       previewWrap.style.borderStyle = 'dashed';
     }
   }
@@ -1968,13 +2085,13 @@ export function createDelphiImageryPanel(
     const w = sourceCanvas.width;
     const h = sourceCanvas.height;
     const rects = getLayerRects(ctx, w, h, graphicsLayers, { delphiLogo: delphiLogoImage, delphiSymbol: delphiSymbolImage, strapline: straplineImage, straplineTrim: straplineSourceTrim });
-    // Prefer headline over marketData when they overlap (headline is the main text control)
+    /** Top-most layer first — must match painter order in drawGraphicsLayers(). */
     if (rects.cta && pointInRect(canvasX, canvasY, rects.cta)) return 'cta';
-    if (rects.headline && pointInRect(canvasX, canvasY, rects.headline)) return 'headline';
     if (rects.marketData && pointInRect(canvasX, canvasY, rects.marketData)) return 'marketData';
+    if (rects.strapline && pointInRect(canvasX, canvasY, rects.strapline)) return 'strapline';
+    if (rects.headline && pointInRect(canvasX, canvasY, rects.headline)) return 'headline';
     if (rects.delphiLogo && pointInRect(canvasX, canvasY, rects.delphiLogo)) return 'delphiLogo';
     if (rects.delphiSymbol && pointInRect(canvasX, canvasY, rects.delphiSymbol)) return 'delphiSymbol';
-    if (rects.strapline && pointInRect(canvasX, canvasY, rects.strapline)) return 'strapline';
     if (rects.userLogo && pointInRect(canvasX, canvasY, rects.userLogo)) return 'userLogo';
     return null;
   }
@@ -2049,7 +2166,7 @@ export function createDelphiImageryPanel(
     placeholder.style.display = 'none';
     previewControlsRow.style.display = 'flex';
     previewWrap.style.cursor = 'default';
-    previewWrap.style.minHeight = '0';
+    previewWrap.style.minHeight = previewWrapMinHeightCss;
     previewWrap.style.borderStyle = 'solid';
     void previewInner.offsetWidth;
     syncPreviewCanvasDisplaySize();
@@ -2282,7 +2399,7 @@ export function createDelphiImageryPanel(
           previewCanvas.style.display = 'none';
           previewControlsRow.style.display = 'none';
           previewWrap.style.cursor = 'pointer';
-          previewWrap.style.minHeight = '200px';
+          previewWrap.style.minHeight = previewWrapMinHeightCss;
           previewWrap.style.borderStyle = 'dashed';
         }
       });
@@ -2315,7 +2432,7 @@ export function createDelphiImageryPanel(
 
   function setLayerSizeValue(layer: DraggingLayer, value: number): void {
     if (layer === 'headline') {
-      graphicsLayers.headline.fontSize = Math.max(8, Math.min(120, Math.round(value)));
+      graphicsLayers.headline.fontSize = Math.max(8, Math.min(240, Math.round(value)));
       headlineSizeInput.value = String(graphicsLayers.headline.fontSize);
       headlineSizeValue.textContent = `${graphicsLayers.headline.fontSize}px`;
     } else if (layer === 'delphiLogo') {
@@ -2447,7 +2564,7 @@ export function createDelphiImageryPanel(
     const ctx = previewCanvas.getContext('2d');
 
     // Check handles of selected layer first (headline has no corner resize — use panel slider only)
-    if (selectedLayer && selectedLayer !== 'headline' && ctx) {
+    if (selectedLayer && ctx) {
       const rects = getLayerRects(ctx, sourceCanvas.width, sourceCanvas.height, graphicsLayers, { delphiLogo: delphiLogoImage, delphiSymbol: delphiSymbolImage, strapline: straplineImage, straplineTrim: straplineSourceTrim });
       const selRect = rects[selectedLayer];
       if (selRect) {
@@ -2555,7 +2672,7 @@ export function createDelphiImageryPanel(
     } else {
       // Update cursor based on what's under the mouse
       const ctx = previewCanvas.getContext('2d');
-      if (selectedLayer && selectedLayer !== 'headline' && ctx) {
+      if (selectedLayer && ctx) {
         const rects = getLayerRects(ctx, sourceCanvas.width, sourceCanvas.height, graphicsLayers, { delphiLogo: delphiLogoImage, delphiSymbol: delphiSymbolImage, strapline: straplineImage, straplineTrim: straplineSourceTrim });
         const selRect = rects[selectedLayer];
         if (selRect) {
@@ -2608,7 +2725,7 @@ export function createDelphiImageryPanel(
     const touch = e.touches[0];
     const { x, y } = clientXYToBitmapXY(touch.clientX, touch.clientY);
 
-    if (selectedLayer && selectedLayer !== 'headline') {
+    if (selectedLayer) {
       const ctx = previewCanvas.getContext('2d');
       if (ctx) {
         const rects = getLayerRects(ctx, sourceCanvas.width, sourceCanvas.height, graphicsLayers, { delphiLogo: delphiLogoImage, delphiSymbol: delphiSymbolImage, strapline: straplineImage, straplineTrim: straplineSourceTrim });
@@ -2940,23 +3057,7 @@ export function createDelphiImageryPanel(
 
   effectSection.appendChild(controlsGrid);
 
-  const originalRow = document.createElement('div');
-  originalRow.style.cssText = 'display: flex; align-items: center; gap: 10px; margin-top: 4px;';
-  const originalCheck = document.createElement('input');
-  originalCheck.type = 'checkbox';
-  originalCheck.id = 'delphi-original-colors';
-  originalCheck.checked = config.useOriginalColors;
-  originalCheck.style.cssText = 'width: 16px; height: 16px; accent-color: #FBA89D; cursor: pointer;';
-  const originalLabel = document.createElement('label');
-  originalLabel.htmlFor = 'delphi-original-colors';
-  originalLabel.textContent = 'Full colour (photo through stripes)';
-  originalLabel.style.cssText =
-    'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.65; cursor: pointer; text-transform: uppercase; letter-spacing: 0.06em;';
-  originalRow.appendChild(originalCheck);
-  originalRow.appendChild(originalLabel);
-  effectSection.appendChild(originalRow);
-
-  // Duotone palette (highlight ignored when using original colours)
+  // Full colour is always enabled; only background (gap) color is configurable.
   const paletteRow = document.createElement('div');
   paletteRow.style.cssText = 'display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin-top: 8px;';
   const shadowWrap = document.createElement('div');
@@ -2970,46 +3071,16 @@ export function createDelphiImageryPanel(
   shadowColor.style.cssText = 'width: 56px; height: 36px; border: none; border-radius: 6px; cursor: pointer; padding: 0;';
   shadowWrap.appendChild(shadowLabel);
   shadowWrap.appendChild(shadowColor);
-  const highlightWrap = document.createElement('div');
-  highlightWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const highlightLabel = document.createElement('label');
-  highlightLabel.textContent = 'Highlight (light)';
-  highlightLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const highlightColor = document.createElement('input');
-  highlightColor.type = 'color';
-  highlightColor.value = config.colorHighlight;
-  highlightColor.style.cssText = 'width: 56px; height: 36px; border: none; border-radius: 6px; cursor: pointer; padding: 0;';
-  highlightWrap.appendChild(highlightLabel);
-  highlightWrap.appendChild(highlightColor);
   paletteRow.appendChild(shadowWrap);
-  paletteRow.appendChild(highlightWrap);
-
-  const syncDuotoneControls = (): void => {
-    const orig = config.useOriginalColors;
-    highlightColor.disabled = orig;
-    highlightWrap.style.opacity = orig ? '0.42' : '1';
-    highlightLabel.style.opacity = orig ? '0.6' : '1';
-    shadowLabel.textContent = orig ? 'Background (gaps)' : 'Background';
-  };
-
-  originalCheck.addEventListener('change', () => {
-    config.useOriginalColors = originalCheck.checked;
-    syncDuotoneControls();
-    drawPreview();
-  });
+  shadowLabel.textContent = 'Background (gaps)';
 
   shadowColor.addEventListener('input', () => {
     config.colorShadow = shadowColor.value;
     drawPreview();
   });
-  highlightColor.addEventListener('input', () => {
-    config.colorHighlight = highlightColor.value;
-    drawPreview();
-  });
-  syncDuotoneControls();
   effectSection.appendChild(paletteRow);
 
-  controlsColumn.appendChild(effectSection);
+  imageEffectPanel.appendChild(effectSection);
 
   // GRAPHICS OVERLAYS
   const graphicsSection = document.createElement('div');
@@ -3140,12 +3211,12 @@ export function createDelphiImageryPanel(
   const headlineSizeInput = document.createElement('input');
   headlineSizeInput.type = 'range';
   headlineSizeInput.min = '12';
-  headlineSizeInput.max = '72';
+  headlineSizeInput.max = '240';
   headlineSizeInput.step = '2';
   headlineSizeInput.value = String(graphicsLayers.headline.fontSize);
   headlineSizeInput.style.cssText = 'width: 100%; max-width: 120px;';
   const headlineSizeValue = document.createElement('span');
-  headlineSizeValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6; min-width: 36px;';
+  headlineSizeValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6; min-width: 42px;';
   headlineSizeValue.textContent = `${graphicsLayers.headline.fontSize}px`;
   headlineSizeGroup.appendChild(headlineSizeLabel);
   headlineSizeGroup.appendChild(headlineSizeInput);
@@ -3591,7 +3662,7 @@ export function createDelphiImageryPanel(
   marketDataControls.appendChild(mdBarColorGroup);
 
   marketDataWrap.appendChild(marketDataControls);
-  graphicsSection.appendChild(marketDataWrap);
+  marketDataPanel.appendChild(marketDataWrap);
 
   let marketSearchTimer: ReturnType<typeof setTimeout> | null = null;
   let marketSearchRequestId = 0;
@@ -3839,44 +3910,7 @@ export function createDelphiImageryPanel(
     ctaSizeValue.textContent = `${graphicsLayers.cta.fontSize}px`;
   };
 
-  controlsColumn.appendChild(graphicsSection);
-
-  // EXPORT
-  const exportSection = document.createElement('div');
-  exportSection.style.cssText = `
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding-top: 20px;
-    border-top: 1px solid rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.1);
-  `;
-  const exportBtn = document.createElement('button');
-  exportBtn.textContent = 'Export PNG';
-  exportBtn.type = 'button';
-  exportBtn.style.cssText = `
-    background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08);
-    border: ${BORDER};
-    border-radius: 6px;
-    padding: 12px 24px;
-    font-family: 'Instrument Serif', serif;
-    font-size: 11pt;
-    font-weight: 400;
-    color: var(--fg);
-    cursor: pointer;
-    transition: background 0.2s ease;
-    align-self: flex-start;
-  `;
-  exportBtn.addEventListener('mouseenter', () => { exportBtn.style.background = 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.12)'; });
-  exportBtn.addEventListener('mouseleave', () => { exportBtn.style.background = 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08)'; });
-  exportBtn.addEventListener('click', () => {
-    if (!exportCanvas) return;
-    const link = document.createElement('a');
-    link.download = 'delphi-duotone.png';
-    link.href = exportCanvas.toDataURL('image/png');
-    link.click();
-  });
-  exportSection.appendChild(exportBtn);
-  controlsColumn.appendChild(exportSection);
+  graphicsPanel.appendChild(graphicsSection);
 
   const controlsBottomFade = document.createElement('div');
   controlsBottomFade.setAttribute('aria-hidden', 'true');
@@ -3907,6 +3941,7 @@ export function createDelphiImageryPanel(
   });
   controlsScrollFadeRo.observe(controlsColumn);
   requestAnimationFrame(() => requestAnimationFrame(updateControlsColumnScrollFade));
+  updateControlsTabs();
 
   window.addEventListener('resize', updateControlsColumnScrollFade);
 
