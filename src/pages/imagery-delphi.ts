@@ -539,6 +539,210 @@ interface LayerRect {
   h: number;
 }
 
+const MARKET_DISCLAIMER_LINES = [
+  'Market active at time of publication.',
+  'Sentiment reflects latest available data.',
+];
+const MARKET_TITLE_WRAP_CHARS = 40;
+
+interface MarketOverlayLayout {
+  fs: number;
+  pad: number;
+  totalW: number;
+  totalH: number;
+  contentW: number;
+  titleLines: string[];
+  titleLineH: number;
+  titleH: number;
+  chipH: number;
+  chipW: number;
+  sectionPad: number;
+  sentimentTitleH: number;
+  barH: number;
+  legendLineH: number;
+  sentimentBlockH: number;
+  gapAfterTitle: number;
+  gapAfterChip: number;
+  gapBeforeDisclaimer: number;
+  disclaimerLineH: number;
+  disclaimerLines: string[];
+  /** Normalized probabilities in API/original layer order (used for stacked bar when ≤2 outcomes). */
+  points: Array<{ label: string; probability: number }>;
+  /** Sorted by descending probability — only used when showing top-two rows + “+more”. */
+  multiOutcomeMode: boolean;
+  topTwoRanked: Array<{ label: string; probability: number }>;
+  overflowMoreCount: number;
+}
+
+function wrapTextByWidth(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxCharsPerLine = Number.POSITIVE_INFINITY
+): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const words = trimmed.split(/\s+/);
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (
+      !current ||
+      (ctx.measureText(candidate).width <= maxWidth && candidate.length <= maxCharsPerLine)
+    ) {
+      current = candidate;
+      continue;
+    }
+    lines.push(current);
+    current = word;
+    while (current.length > maxCharsPerLine) {
+      lines.push(current.slice(0, maxCharsPerLine));
+      current = current.slice(maxCharsPerLine);
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function buildMarketOverlayLayout(
+  ctx: CanvasRenderingContext2D,
+  md: GraphicsLayers['marketData']
+): MarketOverlayLayout {
+  const fs = md.fontSize;
+  const pad = fs * 1.1;
+  const sectionPad = fs * 0.85;
+  const sentimentTitleH = fs * 1.1;
+  const barH = fs * 0.56;
+  const chipH = md.volume ? fs * 1.35 : 0;
+  const titleLineH = fs * 1.24;
+  const legendLineH = fs * 1.05;
+  const disclaimerLineH = fs * 0.78;
+  const disclaimerLines = MARKET_DISCLAIMER_LINES;
+  const rawPoints = md.options.map((opt, idx) => ({
+    label: opt.label.trim() || `Option ${idx + 1}`,
+    probability: Number.isFinite(opt.probability) ? Math.max(0, opt.probability) : 0,
+  }));
+  const probabilitySum = rawPoints.reduce((sum, point) => sum + point.probability, 0);
+  const points = rawPoints.map((point) => ({
+    label: point.label,
+    probability: probabilitySum > 0 ? point.probability / probabilitySum : 1 / Math.max(1, rawPoints.length),
+  }));
+
+  const multiOutcomeMode = points.length > 2;
+  const sortedByProb = [...points].sort((a, b) => b.probability - a.probability);
+  const topTwoRanked = multiOutcomeMode ? sortedByProb.slice(0, 2) : [];
+  const overflowMoreCount = multiOutcomeMode ? Math.max(0, points.length - 2) : 0;
+
+  const gapAfterTitle = md.title ? fs * 0.5 : 0;
+  const gapAfterChip = md.volume ? fs * 0.7 : 0;
+  const gapBeforeDisclaimer = fs * 0.55;
+
+  let sentimentBlockH: number;
+  if (multiOutcomeMode && topTwoRanked.length > 0) {
+    const gapAfterSentimentHeader = fs * 0.45;
+    const barToLabelGap = fs * 0.38;
+    const gapBetweenOutcomeStacks = fs * 0.55;
+    const rowStackH = barH + barToLabelGap + legendLineH;
+    const stacks = Math.min(2, topTwoRanked.length);
+    sentimentBlockH = sectionPad * 2
+      + sentimentTitleH
+      + gapAfterSentimentHeader
+      + stacks * rowStackH
+      + (stacks > 1 ? gapBetweenOutcomeStacks : 0);
+  } else {
+    const legendRows = Math.max(1, Math.ceil(points.length / 2));
+    const legendH = legendRows * legendLineH;
+    sentimentBlockH = sectionPad * 2 + sentimentTitleH + fs * 0.55 + barH + fs * 0.65 + legendH;
+  }
+
+  ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
+  const chipW = md.volume ? ctx.measureText(md.volume).width + fs * 1.1 : 0;
+
+  const pct = (p: number) => `${Math.round(p * 100)}%`;
+
+  let sentimentMinW = chipW;
+  if (multiOutcomeMode) {
+    ctx.font = `${Math.round(fs * 0.72)}px ${FRAGMENT_MONO}`;
+    let headerW = ctx.measureText('SENTIMENT').width;
+    if (overflowMoreCount > 0) {
+      headerW += fs * 1.25 + ctx.measureText(`(+${overflowMoreCount} More)`).width;
+    }
+    sentimentMinW = Math.max(sentimentMinW, headerW);
+    ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
+    for (const opt of topTwoRanked) {
+      const pairW = ctx.measureText(opt.label).width + fs * 3.2 + ctx.measureText(pct(opt.probability)).width;
+      sentimentMinW = Math.max(sentimentMinW, pairW);
+    }
+  } else if (points.length > 0) {
+    const legendTexts = points.map((opt) => `${pct(opt.probability)} ${opt.label}`);
+    let leftColW = 0;
+    let rightColW = 0;
+    for (let i = 0; i < legendTexts.length; i++) {
+      const textW = ctx.measureText(legendTexts[i]).width;
+      if (i % 2 === 0) leftColW = Math.max(leftColW, textW);
+      else rightColW = Math.max(rightColW, textW);
+    }
+    const legendColGap = rightColW > 0 ? fs * 1.6 : 0;
+    sentimentMinW = Math.max(chipW, leftColW + rightColW + legendColGap);
+  }
+
+  const minContentW = fs * 16;
+  let contentW = Math.max(minContentW, sentimentMinW);
+
+  ctx.font = `600 ${Math.round(fs * 1.25)}px 'Figtree', sans-serif`;
+  let titleLines = md.title
+    ? wrapTextByWidth(ctx, md.title, contentW, MARKET_TITLE_WRAP_CHARS)
+    : [];
+  if (titleLines.length === 0 && md.title) titleLines = [md.title.trim()];
+  let titleMaxW = 0;
+  for (const line of titleLines) titleMaxW = Math.max(titleMaxW, ctx.measureText(line).width);
+  contentW = Math.max(contentW, titleMaxW);
+
+  if (md.title) {
+    titleLines = wrapTextByWidth(ctx, md.title, contentW, MARKET_TITLE_WRAP_CHARS);
+    if (titleLines.length === 0) titleLines = [md.title.trim()];
+  }
+
+  const titleH = titleLines.length * titleLineH;
+  const totalW = pad * 2 + contentW;
+  const totalH = pad * 2
+    + titleH
+    + gapAfterTitle
+    + chipH
+    + gapAfterChip
+    + sentimentBlockH
+    + gapBeforeDisclaimer
+    + disclaimerLines.length * disclaimerLineH;
+
+  return {
+    fs,
+    pad,
+    totalW,
+    totalH,
+    contentW,
+    titleLines,
+    titleLineH,
+    titleH,
+    chipH,
+    chipW,
+    sectionPad,
+    sentimentTitleH,
+    barH,
+    legendLineH,
+    sentimentBlockH,
+    gapAfterTitle,
+    gapAfterChip,
+    gapBeforeDisclaimer,
+    disclaimerLineH,
+    disclaimerLines,
+    points,
+    multiOutcomeMode,
+    topTwoRanked,
+    overflowMoreCount,
+  };
+}
+
 /**
  * Get bounding rects for visible layers (for hit-testing).
  */
@@ -548,37 +752,8 @@ function measureMarketDataRect(
 ): LayerRect | null {
   const md = layers.marketData;
   if (!md.enabled || md.options.length === 0) return null;
-
-  const fs = md.fontSize;
-  const pad = fs * 1.1;
-  const titleH = md.title ? fs * 2.1 : 0;
-  const chipH = md.volume ? fs * 1.35 : 0;
-  const sectionPad = fs * 0.85;
-  const sentimentTitleH = fs * 1.1;
-  const barH = fs * 0.56;
-  const sentimentFooterH = fs * 1.05;
-  const disclaimerH = fs * 0.95;
-  const sentimentBlockH = sectionPad * 2 + sentimentTitleH + fs * 0.55 + barH + fs * 0.65 + sentimentFooterH;
-  const gapAfterTitle = md.title ? fs * 0.5 : 0;
-  const gapAfterChip = md.volume ? fs * 0.7 : 0;
-  const gapBeforeDisclaimer = fs * 0.55;
-
-  ctx.font = `${Math.round(fs * 1.25)}px 'Figtree', sans-serif`;
-  const titleW = md.title ? ctx.measureText(md.title).width : 0;
-  ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
-  const chipW = md.volume ? ctx.measureText(md.volume).width + fs * 1.1 : 0;
-
-  let labelsW = 0;
-  for (const opt of md.options.slice(0, 2)) {
-    labelsW += ctx.measureText(`${Math.round(opt.probability * 100)}% ${opt.label}`).width;
-  }
-  labelsW += fs * 2;
-
-  const minCardW = fs * 18;
-  const totalW = Math.max(minCardW, pad * 2 + Math.max(titleW, chipW, labelsW));
-  const totalH = pad * 2 + titleH + gapAfterTitle + chipH + gapAfterChip + sentimentBlockH + gapBeforeDisclaimer + disclaimerH;
-
-  return { x: md.x, y: md.y, w: totalW, h: totalH };
+  const layout = buildMarketOverlayLayout(ctx, md);
+  return { x: md.x, y: md.y, w: layout.totalW, h: layout.totalH };
 }
 
 type LayerRects = {
@@ -967,32 +1142,10 @@ function drawMarketDataOverlay(
   ctx: CanvasRenderingContext2D,
   md: GraphicsLayers['marketData']
 ): void {
-  const fs = md.fontSize;
-  const pad = fs * 1.1;
-  const titleH = md.title ? fs * 2.1 : 0;
-  const chipH = md.volume ? fs * 1.35 : 0;
-  const sectionPad = fs * 0.85;
-  const sentimentTitleH = fs * 1.1;
-  const barH = fs * 0.56;
-  const sentimentFooterH = fs * 1.05;
-  const disclaimerH = fs * 0.95;
-  const sentimentBlockH = sectionPad * 2 + sentimentTitleH + fs * 0.55 + barH + fs * 0.65 + sentimentFooterH;
-  const gapAfterTitle = md.title ? fs * 0.5 : 0;
-  const gapAfterChip = md.volume ? fs * 0.7 : 0;
-  const gapBeforeDisclaimer = fs * 0.55;
-
-  ctx.font = `${Math.round(fs * 1.25)}px 'Figtree', sans-serif`;
-  const titleW = md.title ? ctx.measureText(md.title).width : 0;
-  ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
-  const chipW = md.volume ? ctx.measureText(md.volume).width + fs * 1.1 : 0;
-  let labelsW = 0;
-  for (const opt of md.options.slice(0, 2)) {
-    labelsW += ctx.measureText(`${Math.round(opt.probability * 100)}% ${opt.label}`).width;
-  }
-  labelsW += fs * 2;
-  const minCardW = fs * 18;
-  const totalW = Math.max(minCardW, pad * 2 + Math.max(titleW, chipW, labelsW));
-  const totalH = pad * 2 + titleH + gapAfterTitle + chipH + gapAfterChip + sentimentBlockH + gapBeforeDisclaimer + disclaimerH;
+  const layout = buildMarketOverlayLayout(ctx, md);
+  const { fs, pad, chipH, sectionPad, sentimentTitleH, barH, gapAfterTitle, gapAfterChip, gapBeforeDisclaimer } = layout;
+  const totalW = layout.totalW;
+  const totalH = layout.totalH;
 
   ctx.save();
   const radius = fs * 0.42;
@@ -1007,12 +1160,15 @@ function drawMarketDataOverlay(
   let curY = md.y + pad;
   const leftX = md.x + pad;
 
-  if (md.title) {
+  if (layout.titleLines.length > 0) {
     ctx.font = `600 ${Math.round(fs * 1.25)}px 'Figtree', sans-serif`;
     ctx.fillStyle = 'rgba(36, 36, 36, 0.96)';
     ctx.textBaseline = 'top';
-    ctx.fillText(md.title, leftX, curY, totalW - pad * 2);
-    curY += titleH + gapAfterTitle;
+    for (const line of layout.titleLines) {
+      ctx.fillText(line, leftX, curY);
+      curY += layout.titleLineH;
+    }
+    curY += gapAfterTitle;
   }
 
   if (md.volume) {
@@ -1037,69 +1193,126 @@ function drawMarketDataOverlay(
   const sentimentY = curY;
   const sentimentW = totalW - pad * 2;
 
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.035)';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
   ctx.beginPath();
-  ctx.roundRect(sentimentX, sentimentY, sentimentW, sentimentBlockH, fs * 0.26);
+  ctx.roundRect(sentimentX, sentimentY, sentimentW, layout.sentimentBlockH, fs * 0.26);
   ctx.fill();
 
   const contentX = sentimentX + sectionPad;
   let contentY = sentimentY + sectionPad;
-  ctx.font = `${Math.round(fs * 0.72)}px ${FRAGMENT_MONO}`;
-  ctx.fillStyle = 'rgba(30, 30, 30, 0.58)';
-  ctx.textBaseline = 'top';
-  ctx.fillText('SENTIMENT', contentX, contentY);
-  contentY += sentimentTitleH + fs * 0.55;
-
-  const barX = contentX;
-  const barY = contentY;
   const barW = sentimentW - sectionPad * 2;
-  const barRadius = barH / 2;
+  const barX = contentX;
+  const palette = ['#367CD6', '#45C38C', '#F05D67', '#F3B295'];
+  const pctStr = (p: number): string => `${Math.round(p * 100)}%`;
 
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
-  ctx.beginPath();
-  ctx.roundRect(barX, barY, barW, barH, barRadius);
-  ctx.fill();
+  if (layout.multiOutcomeMode && layout.topTwoRanked.length > 0) {
+    ctx.font = `${Math.round(fs * 0.72)}px ${FRAGMENT_MONO}`;
+    ctx.fillStyle = 'rgba(30, 30, 30, 0.72)';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText('SENTIMENT', contentX, contentY);
+    if (layout.overflowMoreCount > 0) {
+      ctx.fillStyle = 'rgba(30, 30, 30, 0.45)';
+      ctx.textAlign = 'right';
+      ctx.fillText(`(+${layout.overflowMoreCount} More)`, contentX + barW, contentY);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(30, 30, 30, 0.72)';
+    }
 
-  const palette = ['#45C38C', '#F05D67', '#367CD6', '#F3B295'];
-  const points = md.options.slice(0, 4);
-  let cursor = 0;
-  for (let i = 0; i < points.length; i++) {
-    const opt = points[i];
-    const segW = i === points.length - 1 ? Math.max(0, barW - cursor) : Math.max(0, Math.round(barW * opt.probability));
-    if (segW <= 0) continue;
-    ctx.fillStyle = palette[i % palette.length];
+    contentY += sentimentTitleH + fs * 0.45;
+    const gapBetweenStacks = fs * 0.55;
+
+    const barRadius = barH / 2;
+    for (let ti = 0; ti < layout.topTwoRanked.length; ti++) {
+      const opt = layout.topTwoRanked[ti];
+      const barY = contentY;
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+      ctx.beginPath();
+      ctx.roundRect(barX, barY, barW, barH, barRadius);
+      ctx.fill();
+
+      const fillW = Math.max(0, Math.round(barW * opt.probability));
+      if (fillW > 0) {
+        ctx.fillStyle = palette[ti % palette.length];
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, fillW, barH, Math.min(barRadius, fillW / 2));
+        ctx.fill();
+      }
+
+      contentY += barH + fs * 0.38;
+      ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
+      ctx.fillStyle = 'rgba(28, 28, 28, 0.72)';
+      const percentText = pctStr(opt.probability);
+      ctx.textAlign = 'left';
+      ctx.fillText(opt.label, contentX, contentY);
+      ctx.textAlign = 'right';
+      ctx.fillText(percentText, contentX + barW, contentY);
+      ctx.textAlign = 'left';
+
+      contentY += layout.legendLineH;
+      if (ti === 0 && layout.topTwoRanked.length > 1) contentY += gapBetweenStacks;
+    }
+  } else {
+    ctx.font = `${Math.round(fs * 0.72)}px ${FRAGMENT_MONO}`;
+    ctx.fillStyle = 'rgba(30, 30, 30, 0.7)';
+    ctx.textBaseline = 'top';
+    ctx.fillText('SENTIMENT', contentX, contentY);
+    contentY += sentimentTitleH + fs * 0.55;
+
+    const barY = contentY;
+    const barRadius = barH / 2;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
     ctx.beginPath();
-    ctx.roundRect(barX + cursor, barY, segW, barH, Math.min(barRadius, segW / 2));
+    ctx.roundRect(barX, barY, barW, barH, barRadius);
     ctx.fill();
-    cursor += segW;
+
+    const points = layout.points;
+    let cursor = 0;
+    for (let i = 0; i < points.length; i++) {
+      const opt = points[i];
+      const segW = i === points.length - 1 ? Math.max(0, barW - cursor) : Math.max(0, Math.round(barW * opt.probability));
+      if (segW <= 0) continue;
+      ctx.fillStyle = palette[i % palette.length];
+      ctx.beginPath();
+      ctx.roundRect(barX + cursor, barY, segW, barH, Math.min(barRadius, segW / 2));
+      ctx.fill();
+      cursor += segW;
+    }
+
+    contentY += barH + fs * 0.65;
+    ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
+    ctx.fillStyle = 'rgba(28, 28, 28, 0.72)';
+    ctx.textBaseline = 'top';
+
+    if (points.length === 2) {
+      const left = points[0];
+      const right = points[1];
+      const leftText = `${pctStr(left.probability)} ${left.label}`;
+      const rightText = `${pctStr(right.probability)} ${right.label}`;
+      ctx.textAlign = 'left';
+      ctx.fillText(leftText, contentX, contentY);
+      ctx.textAlign = 'right';
+      ctx.fillText(rightText, contentX + barW, contentY);
+      ctx.textAlign = 'left';
+    } else if (points.length === 1) {
+      const only = points[0];
+      ctx.fillText(`${pctStr(only.probability)} ${only.label}`, contentX, contentY);
+    } else if (points.length === 0) {
+      ctx.fillStyle = 'rgba(28, 28, 28, 0.52)';
+      ctx.fillText('No sentiment data available', contentX, contentY);
+    }
   }
 
-  contentY += barH + fs * 0.65;
-  ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
-  ctx.fillStyle = 'rgba(28, 28, 28, 0.72)';
-  ctx.textBaseline = 'top';
-
-  if (points.length >= 2) {
-    const left = points[0];
-    const right = points[1];
-    const leftText = `${Math.round(left.probability * 100)}% ${left.label}`;
-    const rightText = `${Math.round(right.probability * 100)}% ${right.label}`;
-    ctx.textAlign = 'left';
-    ctx.fillText(leftText, contentX, contentY);
-    ctx.textAlign = 'right';
-    ctx.fillText(rightText, contentX + barW, contentY);
-    ctx.textAlign = 'left';
-  } else if (points.length === 1) {
-    const only = points[0];
-    ctx.fillText(`${Math.round(only.probability * 100)}% ${only.label}`, contentX, contentY);
-  }
-
-  const disclaimerY = sentimentY + sentimentBlockH + gapBeforeDisclaimer;
+  const disclaimerY = sentimentY + layout.sentimentBlockH + gapBeforeDisclaimer;
   ctx.font = `${Math.round(fs * 0.58)}px ${FRAGMENT_MONO}`;
   ctx.fillStyle = 'rgba(28, 28, 28, 0.42)';
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
-  ctx.fillText('Market active and sentiment accurate at time of graphic publication.', contentX, disclaimerY);
+  for (let i = 0; i < layout.disclaimerLines.length; i++) {
+    ctx.fillText(layout.disclaimerLines[i], contentX, disclaimerY + i * layout.disclaimerLineH);
+  }
 
   ctx.restore();
 }
