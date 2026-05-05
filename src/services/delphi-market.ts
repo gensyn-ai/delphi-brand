@@ -37,11 +37,13 @@ export interface DelphiMarketOverlayData {
 const DEFAULT_API_BASE_URL = '/api/delphi';
 const NETWORK_DEFAULTS = {
   mainnet: {
+    apiBaseUrl: 'https://api.delphi.fyi',
     marketBaseUrl: 'https://app.delphi.fyi/markets',
     rpcUrl: 'https://gensyn-mainnet.g.alchemy.com/public',
     gatewayAddress: '0x4e4e85c52E0F414cc67eE88d0C649Ec81698d700' as const,
   },
   testnet: {
+    apiBaseUrl: 'https://delphi-api.gensyn.ai',
     marketBaseUrl: 'https://testnet.delphi.fyi/markets',
     rpcUrl: 'https://gensyn-testnet.g.alchemy.com/public',
     gatewayAddress: '0x7b8FDBD187B0Be5e30e48B1995df574A62667147' as const,
@@ -83,7 +85,11 @@ function getDelphiNetwork(): 'testnet' | 'mainnet' {
 }
 
 function getApiBaseUrl(): string {
-  return (import.meta.env.VITE_DELPHI_API_BASE_URL ?? DEFAULT_API_BASE_URL).replace(/\/+$/, '');
+  const network = getDelphiNetwork();
+  const defaultBase = import.meta.env.DEV
+    ? DEFAULT_API_BASE_URL
+    : NETWORK_DEFAULTS[network].apiBaseUrl;
+  return (import.meta.env.VITE_DELPHI_API_BASE_URL ?? defaultBase).replace(/\/+$/, '');
 }
 
 function getMarketBaseUrl(): string {

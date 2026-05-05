@@ -3247,7 +3247,10 @@ export function createDelphiImageryPanel(
   marketDataHint.style.cssText = `font-family: 'Fragment Mono', monospace; font-size: 8pt; color: var(--fg); opacity: 0.5; margin: 0;`;
   marketDataWrap.appendChild(marketDataHint);
 
-  const hasDelphiApiKey = Boolean(import.meta.env.VITE_DELPHI_API_ACCESS_KEY);
+  const hasDelphiApiKey = Boolean(
+    import.meta.env.VITE_DELPHI_API_ACCESS_KEY
+    || import.meta.env.VITE_DELPHI_API_ACCESS_KEY_MAINNET
+  );
   const mdSettingsHint = document.createElement('div');
   mdSettingsHint.style.cssText = `
     display: ${hasDelphiApiKey ? 'none' : 'block'};
@@ -3261,7 +3264,7 @@ export function createDelphiImageryPanel(
     opacity: 0.75;
     line-height: 1.5;
   `;
-  mdSettingsHint.textContent = 'Market search is disabled. Add VITE_DELPHI_API_ACCESS_KEY to your .env file, then restart the dev server.';
+  mdSettingsHint.textContent = 'Market search is disabled. Add VITE_DELPHI_API_ACCESS_KEY (or VITE_DELPHI_API_ACCESS_KEY_MAINNET) to your .env file, then restart the dev server.';
   marketDataWrap.appendChild(mdSettingsHint);
 
   const mdSearchWrap = document.createElement('div');
@@ -3288,7 +3291,7 @@ export function createDelphiImageryPanel(
   mdSearchStatus.style.cssText = `margin: 0; font-family: 'Fragment Mono', monospace; font-size: 7.5pt; color: var(--fg); opacity: 0.55;`;
   mdSearchStatus.textContent = hasDelphiApiKey
     ? 'Type to search open Delphi markets.'
-    : 'Search unavailable until VITE_DELPHI_API_ACCESS_KEY is configured.';
+    : 'Search unavailable until a Delphi API key is configured.';
   mdSearchWrap.appendChild(mdSearchStatus);
 
   const mdResults = document.createElement('div');
