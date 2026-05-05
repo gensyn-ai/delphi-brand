@@ -6,6 +6,11 @@ import {
   createDefaultGraphicsLayers,
 } from '../types/delphi-effect';
 import { isMobile } from '../responsive';
+import {
+  searchDelphiMarkets,
+  getDelphiMarketOverlayData,
+  type DelphiMarketSearchResult,
+} from '../services/delphi-market';
 
 const MAX_PREVIEW_PX = 600;
 
@@ -27,11 +32,60 @@ const OUTPUT_SIZE_PRESETS: Array<{ id: string; label: string; w: number; h: numb
  * Image library entries for the “view library” modal. Add `{ src, label }` URLs or
  * paths relative to the app base (e.g. `images/your-folder/photo.jpg`).
  */
-const IMAGERY_LIBRARY_ITEMS: Array<{ src: string; label: string }> = [
-  { src: 'images/library/delphi-library-image-001.png', label: 'Delphi library 001' },
-  { src: 'images/library/delphi-library-image-002.png', label: 'Delphi library 002' },
-  { src: 'images/library/delphi-library-image-003.png', label: 'Delphi library 003' },
-];
+const RAW_LIBRARY_FILENAME_RE = /^delphi-library-image-(\d{3})\.png$/i;
+
+function parseRawLibraryIndex(file: string): number | null {
+  const match = file.match(RAW_LIBRARY_FILENAME_RE);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sortRawLibraryFiles(files: string[]): string[] {
+  return [...files].sort((a, b) => {
+    const aIdx = parseRawLibraryIndex(a) ?? Number.POSITIVE_INFINITY;
+    const bIdx = parseRawLibraryIndex(b) ?? Number.POSITIVE_INFINITY;
+    return aIdx - bIdx || a.localeCompare(b);
+  });
+}
+
+function validateRawLibraryFiles(files: string[]): void {
+  const invalid = files.filter((file) => !RAW_LIBRARY_FILENAME_RE.test(file));
+  if (invalid.length > 0) {
+    console.warn('[imagery-generator] Raw library files must use delphi-library-image-XXX.png naming:', invalid);
+  }
+}
+
+const RAW_LIBRARY_FILES = sortRawLibraryFiles([
+  'delphi-library-image-001.png',
+  'delphi-library-image-002.png',
+  'delphi-library-image-003.png',
+  'delphi-library-image-004.png',
+  'delphi-library-image-006.png',
+  'delphi-library-image-007.png',
+  'delphi-library-image-008.png',
+  'delphi-library-image-009.png',
+  'delphi-library-image-010.png',
+  'delphi-library-image-011.png',
+  'delphi-library-image-012.png',
+  'delphi-library-image-013.png',
+  'delphi-library-image-014.png',
+  'delphi-library-image-015.png',
+  'delphi-library-image-016.png',
+  'delphi-library-image-017.png',
+  'delphi-library-image-018.png',
+  'delphi-library-image-019.png',
+  'delphi-library-image-020.png',
+  'delphi-library-image-021.png',
+  'delphi-library-image-022.png',
+]);
+
+validateRawLibraryFiles(RAW_LIBRARY_FILES);
+
+const IMAGERY_LIBRARY_ITEMS: Array<{ src: string; label: string }> = RAW_LIBRARY_FILES.map((file) => ({
+  src: `images/library/${file}`,
+  label: `Delphi library ${file.match(RAW_LIBRARY_FILENAME_RE)?.[1] ?? file}`,
+}));
 
 function resolvePublicAssetUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path;
@@ -496,21 +550,33 @@ function measureMarketDataRect(
   if (!md.enabled || md.options.length === 0) return null;
 
   const fs = md.fontSize;
-  const rowH = fs * 1.6;
-  const volumeH = fs * 1.3;
-  const pad = fs;
-  const gap = 4;
-  const minBarW = fs * 5;
-  const barW = minBarW;
+  const pad = fs * 1.1;
+  const titleH = md.title ? fs * 2.1 : 0;
+  const chipH = md.volume ? fs * 1.35 : 0;
+  const sectionPad = fs * 0.85;
+  const sentimentTitleH = fs * 1.1;
+  const barH = fs * 0.56;
+  const sentimentFooterH = fs * 1.05;
+  const disclaimerH = fs * 0.95;
+  const sentimentBlockH = sectionPad * 2 + sentimentTitleH + fs * 0.55 + barH + fs * 0.65 + sentimentFooterH;
+  const gapAfterTitle = md.title ? fs * 0.5 : 0;
+  const gapAfterChip = md.volume ? fs * 0.7 : 0;
+  const gapBeforeDisclaimer = fs * 0.55;
 
-  ctx.font = `${fs}px ${FRAGMENT_MONO}`;
-  let maxRowW = 0;
-  for (const opt of md.options) {
-    const labelW = ctx.measureText(opt.label).width;
-    maxRowW = Math.max(maxRowW, labelW + gap + barW + gap + ctx.measureText('100%').width);
+  ctx.font = `${Math.round(fs * 1.25)}px 'Figtree', sans-serif`;
+  const titleW = md.title ? ctx.measureText(md.title).width : 0;
+  ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
+  const chipW = md.volume ? ctx.measureText(md.volume).width + fs * 1.1 : 0;
+
+  let labelsW = 0;
+  for (const opt of md.options.slice(0, 2)) {
+    labelsW += ctx.measureText(`${Math.round(opt.probability * 100)}% ${opt.label}`).width;
   }
-  const totalW = pad * 2 + maxRowW;
-  const totalH = pad + md.options.length * rowH + volumeH + pad;
+  labelsW += fs * 2;
+
+  const minCardW = fs * 18;
+  const totalW = Math.max(minCardW, pad * 2 + Math.max(titleW, chipW, labelsW));
+  const totalH = pad * 2 + titleH + gapAfterTitle + chipH + gapAfterChip + sentimentBlockH + gapBeforeDisclaimer + disclaimerH;
 
   return { x: md.x, y: md.y, w: totalW, h: totalH };
 }
@@ -902,89 +968,138 @@ function drawMarketDataOverlay(
   md: GraphicsLayers['marketData']
 ): void {
   const fs = md.fontSize;
-  const rowH = fs * 1.6;
-  const volumeH = fs * 1.3;
-  const pad = fs;
+  const pad = fs * 1.1;
+  const titleH = md.title ? fs * 2.1 : 0;
+  const chipH = md.volume ? fs * 1.35 : 0;
+  const sectionPad = fs * 0.85;
+  const sentimentTitleH = fs * 1.1;
+  const barH = fs * 0.56;
+  const sentimentFooterH = fs * 1.05;
+  const disclaimerH = fs * 0.95;
+  const sentimentBlockH = sectionPad * 2 + sentimentTitleH + fs * 0.55 + barH + fs * 0.65 + sentimentFooterH;
+  const gapAfterTitle = md.title ? fs * 0.5 : 0;
+  const gapAfterChip = md.volume ? fs * 0.7 : 0;
+  const gapBeforeDisclaimer = fs * 0.55;
 
-  const gap = 4;
-  const minBarW = fs * 5;
-  const barW = minBarW;
-  const pctW = ctx.measureText('100%').width;
-
-  ctx.font = `${fs}px ${FRAGMENT_MONO}`;
-  let maxRowW = 0;
-  for (const opt of md.options) {
-    const labelW = ctx.measureText(opt.label).width;
-    maxRowW = Math.max(maxRowW, labelW + gap + barW + gap + pctW);
+  ctx.font = `${Math.round(fs * 1.25)}px 'Figtree', sans-serif`;
+  const titleW = md.title ? ctx.measureText(md.title).width : 0;
+  ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
+  const chipW = md.volume ? ctx.measureText(md.volume).width + fs * 1.1 : 0;
+  let labelsW = 0;
+  for (const opt of md.options.slice(0, 2)) {
+    labelsW += ctx.measureText(`${Math.round(opt.probability * 100)}% ${opt.label}`).width;
   }
-  const totalW = pad * 2 + maxRowW;
-  const totalH = pad + md.options.length * rowH + volumeH + pad;
+  labelsW += fs * 2;
+  const minCardW = fs * 18;
+  const totalW = Math.max(minCardW, pad * 2 + Math.max(titleW, chipW, labelsW));
+  const totalH = pad * 2 + titleH + gapAfterTitle + chipH + gapAfterChip + sentimentBlockH + gapBeforeDisclaimer + disclaimerH;
 
   ctx.save();
-
-  // Semi-transparent background
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-  const radius = fs * 0.5;
+  const radius = fs * 0.42;
+  ctx.fillStyle = 'rgba(245, 245, 243, 0.95)';
   ctx.beginPath();
-  ctx.moveTo(md.x + radius, md.y);
-  ctx.lineTo(md.x + totalW - radius, md.y);
-  ctx.quadraticCurveTo(md.x + totalW, md.y, md.x + totalW, md.y + radius);
-  ctx.lineTo(md.x + totalW, md.y + totalH - radius);
-  ctx.quadraticCurveTo(md.x + totalW, md.y + totalH, md.x + totalW - radius, md.y + totalH);
-  ctx.lineTo(md.x + radius, md.y + totalH);
-  ctx.quadraticCurveTo(md.x, md.y + totalH, md.x, md.y + totalH - radius);
-  ctx.lineTo(md.x, md.y + radius);
-  ctx.quadraticCurveTo(md.x, md.y, md.x + radius, md.y);
-  ctx.closePath();
+  ctx.roundRect(md.x, md.y, totalW, totalH, radius);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(50, 50, 50, 0.08)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
 
   let curY = md.y + pad;
+  const leftX = md.x + pad;
 
-  // Option rows (title removed; headline above serves as the title)
-  const [barR, barG, barB] = parseHex(md.barColor);
-  const barH = fs * 0.9;
-  const barRadius = barH / 2;
-  ctx.font = `${fs}px ${FRAGMENT_MONO}`;
-  for (const opt of md.options) {
-    const labelX = md.x + pad;
-    const labelW = ctx.measureText(opt.label).width;
-    const barX = labelX + labelW + gap; // bar starts right after this row's label
-    const pctText = `${Math.round(opt.probability * 100)}%`;
-
-    ctx.fillStyle = md.textColor;
+  if (md.title) {
+    ctx.font = `600 ${Math.round(fs * 1.25)}px 'Figtree', sans-serif`;
+    ctx.fillStyle = 'rgba(36, 36, 36, 0.96)';
     ctx.textBaseline = 'top';
-    ctx.fillText(opt.label, labelX, curY + (rowH - fs) / 2);
-
-    const barY = curY + (rowH - barH) / 2;
-
-    // Bar background (rounded)
-    ctx.fillStyle = `rgba(${barR}, ${barG}, ${barB}, 0.2)`;
-    ctx.beginPath();
-    ctx.roundRect(barX, barY, barW, barH, barRadius);
-    ctx.fill();
-
-    // Bar fill (rounded)
-    const fillW = barW * Math.min(1, opt.probability);
-    if (fillW > 0) {
-      ctx.fillStyle = md.barColor;
-      ctx.beginPath();
-      ctx.roundRect(barX, barY, fillW, barH, Math.min(barRadius, fillW / 2));
-      ctx.fill();
-    }
-
-    // Percentage
-    ctx.fillStyle = md.textColor;
-    ctx.fillText(pctText, barX + barW + gap, curY + (rowH - fs) / 2);
-
-    curY += rowH;
+    ctx.fillText(md.title, leftX, curY, totalW - pad * 2);
+    curY += titleH + gapAfterTitle;
   }
 
-  // Volume footer
   if (md.volume) {
-    ctx.font = `${Math.round(fs * 0.8)}px ${FRAGMENT_MONO}`;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.fillText(`Vol: ${md.volume}`, md.x + pad, curY + 2);
+    ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
+    const chipText = md.volume;
+    const chipWReal = ctx.measureText(chipText).width + fs * 1.1;
+    const chipRadius = fs * 0.16;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.03)';
+    ctx.beginPath();
+    ctx.roundRect(leftX, curY, chipWReal, chipH, chipRadius);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(20, 20, 20, 0.55)';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(chipText, leftX + fs * 0.55, curY + chipH / 2);
+    curY += chipH + gapAfterChip;
   }
+
+  const sentimentX = leftX;
+  const sentimentY = curY;
+  const sentimentW = totalW - pad * 2;
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.035)';
+  ctx.beginPath();
+  ctx.roundRect(sentimentX, sentimentY, sentimentW, sentimentBlockH, fs * 0.26);
+  ctx.fill();
+
+  const contentX = sentimentX + sectionPad;
+  let contentY = sentimentY + sectionPad;
+  ctx.font = `${Math.round(fs * 0.72)}px ${FRAGMENT_MONO}`;
+  ctx.fillStyle = 'rgba(30, 30, 30, 0.58)';
+  ctx.textBaseline = 'top';
+  ctx.fillText('SENTIMENT', contentX, contentY);
+  contentY += sentimentTitleH + fs * 0.55;
+
+  const barX = contentX;
+  const barY = contentY;
+  const barW = sentimentW - sectionPad * 2;
+  const barRadius = barH / 2;
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+  ctx.beginPath();
+  ctx.roundRect(barX, barY, barW, barH, barRadius);
+  ctx.fill();
+
+  const palette = ['#45C38C', '#F05D67', '#367CD6', '#F3B295'];
+  const points = md.options.slice(0, 4);
+  let cursor = 0;
+  for (let i = 0; i < points.length; i++) {
+    const opt = points[i];
+    const segW = i === points.length - 1 ? Math.max(0, barW - cursor) : Math.max(0, Math.round(barW * opt.probability));
+    if (segW <= 0) continue;
+    ctx.fillStyle = palette[i % palette.length];
+    ctx.beginPath();
+    ctx.roundRect(barX + cursor, barY, segW, barH, Math.min(barRadius, segW / 2));
+    ctx.fill();
+    cursor += segW;
+  }
+
+  contentY += barH + fs * 0.65;
+  ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
+  ctx.fillStyle = 'rgba(28, 28, 28, 0.72)';
+  ctx.textBaseline = 'top';
+
+  if (points.length >= 2) {
+    const left = points[0];
+    const right = points[1];
+    const leftText = `${Math.round(left.probability * 100)}% ${left.label}`;
+    const rightText = `${Math.round(right.probability * 100)}% ${right.label}`;
+    ctx.textAlign = 'left';
+    ctx.fillText(leftText, contentX, contentY);
+    ctx.textAlign = 'right';
+    ctx.fillText(rightText, contentX + barW, contentY);
+    ctx.textAlign = 'left';
+  } else if (points.length === 1) {
+    const only = points[0];
+    ctx.fillText(`${Math.round(only.probability * 100)}% ${only.label}`, contentX, contentY);
+  }
+
+  const disclaimerY = sentimentY + sentimentBlockH + gapBeforeDisclaimer;
+  ctx.font = `${Math.round(fs * 0.58)}px ${FRAGMENT_MONO}`;
+  ctx.fillStyle = 'rgba(28, 28, 28, 0.42)';
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  ctx.fillText('Market active and sentiment accurate at time of graphic publication.', contentX, disclaimerY);
 
   ctx.restore();
 }
@@ -3128,9 +3243,100 @@ export function createDelphiImageryPanel(
   marketDataWrap.appendChild(marketDataHeader);
 
   const marketDataHint = document.createElement('p');
-  marketDataHint.textContent = 'Overlay a stylised market data block on the image. Edit options and odds below.';
+  marketDataHint.textContent = 'Search Delphi.fyi markets to populate title and sentiment bars.';
   marketDataHint.style.cssText = `font-family: 'Fragment Mono', monospace; font-size: 8pt; color: var(--fg); opacity: 0.5; margin: 0;`;
   marketDataWrap.appendChild(marketDataHint);
+
+  const hasDelphiApiKey = Boolean(import.meta.env.VITE_DELPHI_API_ACCESS_KEY);
+  const mdSettingsHint = document.createElement('div');
+  mdSettingsHint.style.cssText = `
+    display: ${hasDelphiApiKey ? 'none' : 'block'};
+    border: 1px dashed rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.2);
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.03);
+    font-family: 'Fragment Mono', monospace;
+    font-size: 7.5pt;
+    color: var(--fg);
+    opacity: 0.75;
+    line-height: 1.5;
+  `;
+  mdSettingsHint.textContent = 'Market search is disabled. Add VITE_DELPHI_API_ACCESS_KEY to your .env file, then restart the dev server.';
+  marketDataWrap.appendChild(mdSettingsHint);
+
+  const mdSearchWrap = document.createElement('div');
+  mdSearchWrap.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
+
+  const mdSearchInput = document.createElement('input');
+  mdSearchInput.type = 'text';
+  mdSearchInput.placeholder = 'Search market (e.g. BTC, ETH, election...)';
+  mdSearchInput.disabled = !hasDelphiApiKey;
+  mdSearchInput.style.cssText = `
+    width: 100%;
+    padding: 8px 12px;
+    font-family: 'Fragment Mono', monospace;
+    font-size: 8.5pt;
+    color: var(--fg);
+    background: var(--bg);
+    border: ${BORDER};
+    border-radius: 4px;
+    box-sizing: border-box;
+  `;
+  mdSearchWrap.appendChild(mdSearchInput);
+
+  const mdSearchStatus = document.createElement('p');
+  mdSearchStatus.style.cssText = `margin: 0; font-family: 'Fragment Mono', monospace; font-size: 7.5pt; color: var(--fg); opacity: 0.55;`;
+  mdSearchStatus.textContent = hasDelphiApiKey
+    ? 'Type to search open Delphi markets.'
+    : 'Search unavailable until VITE_DELPHI_API_ACCESS_KEY is configured.';
+  mdSearchWrap.appendChild(mdSearchStatus);
+
+  const mdResults = document.createElement('div');
+  mdResults.style.cssText = `
+    display: none;
+    max-height: 170px;
+    overflow-y: auto;
+    border: ${BORDER};
+    border-radius: 6px;
+    background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.03);
+  `;
+  mdSearchWrap.appendChild(mdResults);
+  marketDataWrap.appendChild(mdSearchWrap);
+
+  const mdLinkRow = document.createElement('div');
+  mdLinkRow.style.cssText = 'display: none; align-items: center; gap: 10px; flex-wrap: wrap;';
+  const mdLinkLabel = document.createElement('span');
+  mdLinkLabel.textContent = 'Market URL';
+  mdLinkLabel.style.cssText = LABEL_STYLE;
+  const mdLink = document.createElement('a');
+  mdLink.href = '#';
+  mdLink.target = '_blank';
+  mdLink.rel = 'noopener noreferrer';
+  mdLink.textContent = 'Open market';
+  mdLink.style.cssText = `
+    font-family: 'Fragment Mono', monospace;
+    font-size: 8pt;
+    color: var(--fg);
+    opacity: 0.8;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  `;
+  const mdCopyLink = document.createElement('button');
+  mdCopyLink.type = 'button';
+  mdCopyLink.textContent = 'Copy URL';
+  mdCopyLink.style.cssText = `
+    font-family: 'Fragment Mono', monospace;
+    font-size: 7.5pt;
+    color: var(--fg);
+    opacity: 0.7;
+    background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08);
+    border: ${BORDER};
+    border-radius: 999px;
+    padding: 3px 10px;
+    cursor: pointer;
+  `;
+  mdLinkRow.append(mdLinkLabel, mdLink, mdCopyLink);
+  marketDataWrap.appendChild(mdLinkRow);
 
   const marketDataControls = document.createElement('div');
   marketDataControls.style.cssText = 'display: flex; align-items: center; gap: 16px; flex-wrap: wrap;';
@@ -3171,6 +3377,67 @@ export function createDelphiImageryPanel(
   marketDataWrap.appendChild(marketDataControls);
   graphicsSection.appendChild(marketDataWrap);
 
+  let marketSearchTimer: ReturnType<typeof setTimeout> | null = null;
+  let marketSearchRequestId = 0;
+  let activeMarketUrl = '';
+
+  const renderMarketResults = (items: DelphiMarketSearchResult[]): void => {
+    mdResults.innerHTML = '';
+    if (items.length === 0) {
+      mdResults.style.display = 'none';
+      return;
+    }
+    mdResults.style.display = 'flex';
+    mdResults.style.flexDirection = 'column';
+    for (const item of items) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.style.cssText = `
+        text-align: left;
+        border: none;
+        border-bottom: 1px solid rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.1);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+        padding: 9px 10px;
+      `;
+      const titleEl = document.createElement('div');
+      titleEl.textContent = item.title;
+      titleEl.style.cssText = `font-family: 'Fragment Mono', monospace; font-size: 8pt; opacity: 0.9;`;
+      const metaEl = document.createElement('div');
+      metaEl.textContent = `${item.category} · ${item.status}`;
+      metaEl.style.cssText = `font-family: 'Fragment Mono', monospace; font-size: 7pt; opacity: 0.5; margin-top: 2px;`;
+      btn.append(titleEl, metaEl);
+      btn.addEventListener('click', async () => {
+        mdSearchStatus.textContent = 'Loading market details...';
+        try {
+          const details = await getDelphiMarketOverlayData(item.id);
+          graphicsLayers.marketData.enabled = true;
+          marketDataCheck.checked = true;
+          graphicsLayers.marketData.title = details.title;
+          graphicsLayers.marketData.options = details.sentiment.map((point) => ({
+            label: point.label,
+            probability: point.probability,
+          }));
+          graphicsLayers.marketData.volume = details.category;
+          graphicsLayers.marketData.x = 0;
+          graphicsLayers.marketData.y = 0;
+          activeMarketUrl = details.url;
+          mdLink.href = details.url;
+          mdLinkRow.style.display = 'flex';
+          mdSearchInput.value = details.title;
+          mdResults.style.display = 'none';
+          mdSearchStatus.textContent = 'Market overlay loaded.';
+          drawPreview();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Could not load market details.';
+          mdSearchStatus.textContent = message;
+        }
+      });
+      mdResults.appendChild(btn);
+    }
+  };
+
   marketDataCheck.addEventListener('change', () => {
     graphicsLayers.marketData.enabled = marketDataCheck.checked;
     drawPreview();
@@ -3183,6 +3450,44 @@ export function createDelphiImageryPanel(
   mdBarColorInput.addEventListener('input', () => {
     graphicsLayers.marketData.barColor = mdBarColorInput.value;
     drawPreview();
+  });
+  mdSearchInput.addEventListener('input', () => {
+    const query = mdSearchInput.value.trim();
+    if (marketSearchTimer) {
+      clearTimeout(marketSearchTimer);
+      marketSearchTimer = null;
+    }
+    if (!query) {
+      mdSearchStatus.textContent = 'Type to search open Delphi markets.';
+      renderMarketResults([]);
+      return;
+    }
+    const requestId = ++marketSearchRequestId;
+    mdSearchStatus.textContent = 'Searching markets...';
+    marketSearchTimer = setTimeout(async () => {
+      try {
+        const results = await searchDelphiMarkets(query);
+        if (requestId !== marketSearchRequestId) return;
+        renderMarketResults(results);
+        mdSearchStatus.textContent = results.length > 0
+          ? `Found ${results.length} market${results.length === 1 ? '' : 's'}.`
+          : 'No markets found for this query.';
+      } catch (error) {
+        if (requestId !== marketSearchRequestId) return;
+        renderMarketResults([]);
+        const message = error instanceof Error ? error.message : 'Search failed.';
+        mdSearchStatus.textContent = message;
+      }
+    }, 300);
+  });
+  mdCopyLink.addEventListener('click', async () => {
+    if (!activeMarketUrl) return;
+    try {
+      await navigator.clipboard.writeText(activeMarketUrl);
+      mdSearchStatus.textContent = 'Market URL copied.';
+    } catch {
+      mdSearchStatus.textContent = 'Could not copy URL. You can still open it.';
+    }
   });
 
   // CTA button layer
