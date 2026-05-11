@@ -1,3 +1,20 @@
 node_modules
 dist
 .DS_Store
+
+# --- Secrets & machine-local env (never commit real keys) ---
+.env
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+
+# Optional: commit `.env.example` with dummy keys so others know what to set.
+
+# --- Cursor IDE (session logs, debug ingest, local state) ---
+# Tracked source lives under `src/` and `public/`; nothing under `.cursor/` is required to build.
+.cursor/
+
+# --- Draft / heavy assets (not part of the shipped `Images-ready` set in git) ---
+# Other `public/images/Images-ready/{Creators,Sports,Tech,Weather}/` paths remain tracked.
+public/images/Images-ready/UI/
