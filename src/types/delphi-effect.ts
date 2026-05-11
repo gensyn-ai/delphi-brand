@@ -9,11 +9,11 @@
 export interface DelphiEffectConfig {
   name?: string;
   description?: string;
-  /** Width in pixels of each vertical stripe (column). Typical 2–12. */
+  /** Width in pixels of each vertical stripe (column). Sliders go up to 96px for large export sizes. */
   halftoneCellSize?: number;
   /** How readily mid-tones form visible strokes (0.2–1). Higher = more fill. */
   halftoneDotScale?: number;
-  /** Horizontal gap in pixels between stripes (shows as background). */
+  /** Horizontal gap in pixels between stripes (shows as background). Capped in renderer to match UI. */
   stripeGap?: number;
   /** When true, copy full-resolution source pixels through each stripe (not duotone). */
   useOriginalColors?: boolean;

@@ -28,6 +28,11 @@ const OUTPUT_SIZE_PRESETS: Array<{ id: string; label: string; w: number; h: numb
   { id: 'pinterest', label: 'Pinterest pin · 1000 × 1500', w: 1000, h: 1500 },
 ];
 
+/** Slider + render caps so stripes stay readable at large output sizes (not tiny vs upload). */
+const MAX_STRIPE_WIDTH_PX = 96;
+const MAX_STRIPE_GAP_PX = 96;
+const MAX_STRIPE_END_RADIUS_PX = 48;
+
 /**
  * Image library entries for the “view library” modal. Add `{ src, label }` URLs or
  * paths relative to the app base (e.g. `images/your-folder/photo.jpg`).
@@ -358,12 +363,12 @@ function renderVerticalBlindsDuotone(
   const imageData = wctx.getImageData(0, 0, w, h);
   const data = imageData.data;
   const stripeW = Math.max(1, Math.round(config.halftoneCellSize));
-  const gap = Math.max(0, Math.min(24, Math.round(config.stripeGap)));
+  const gap = Math.max(0, Math.min(MAX_STRIPE_GAP_PX, Math.round(config.stripeGap)));
   const pitch = stripeW + gap;
   const sensitivity = Math.max(0.15, Math.min(1, config.halftoneDotScale));
   const lumThreshold = Math.max(0.02, (1 - sensitivity) * 0.5);
   const fullColor = config.useOriginalColors;
-  const endRadiusMax = Math.max(0, Math.min(16, Math.round(config.stripeEndRadius)));
+  const endRadiusMax = Math.max(0, Math.min(MAX_STRIPE_END_RADIUS_PX, Math.round(config.stripeEndRadius)));
   const lumContrast = Math.max(0.65, Math.min(1.65, config.luminanceContrast));
   const minRun = Math.max(0, Math.min(12, Math.round(config.minRunLength)));
   const edgeStr = Math.max(0, Math.min(1.2, config.edgeMaskStrength));
@@ -1505,6 +1510,15 @@ export function createDelphiImageryPanel(
 ): void {
   const config = { ...mergeWithDefaults(initialConfig) };
   config.useOriginalColors = true;
+  config.halftoneCellSize = Math.min(
+    MAX_STRIPE_WIDTH_PX,
+    Math.max(1, Math.round(config.halftoneCellSize))
+  );
+  config.stripeGap = Math.min(MAX_STRIPE_GAP_PX, Math.max(0, Math.round(config.stripeGap)));
+  config.stripeEndRadius = Math.min(
+    MAX_STRIPE_END_RADIUS_PX,
+    Math.max(0, Math.round(config.stripeEndRadius))
+  );
   const graphicsLayers = createDefaultGraphicsLayers();
   let delphiLogoImage: HTMLImageElement | null = null;
   const delphiLogoImg = new Image();
@@ -2830,7 +2844,7 @@ export function createDelphiImageryPanel(
   const densityInput = document.createElement('input');
   densityInput.type = 'range';
   densityInput.min = '1';
-  densityInput.max = '16';
+  densityInput.max = String(MAX_STRIPE_WIDTH_PX);
   densityInput.step = '1';
   densityInput.value = String(config.halftoneCellSize);
   densityInput.style.cssText = 'width: 100%;';
@@ -2882,7 +2896,7 @@ export function createDelphiImageryPanel(
   const gapInput = document.createElement('input');
   gapInput.type = 'range';
   gapInput.min = '0';
-  gapInput.max = '12';
+  gapInput.max = String(MAX_STRIPE_GAP_PX);
   gapInput.step = '1';
   gapInput.value = String(config.stripeGap);
   gapInput.style.cssText = 'width: 100%;';
@@ -2908,7 +2922,7 @@ export function createDelphiImageryPanel(
   const capInput = document.createElement('input');
   capInput.type = 'range';
   capInput.min = '0';
-  capInput.max = '12';
+  capInput.max = String(MAX_STRIPE_END_RADIUS_PX);
   capInput.step = '1';
   capInput.value = String(config.stripeEndRadius);
   capInput.style.cssText = 'width: 100%;';
