@@ -590,10 +590,7 @@ interface LayerRect {
   h: number;
 }
 
-const MARKET_DISCLAIMER_LINES = [
-  'Market active at time of publication.',
-  'Sentiment reflects latest available data.',
-];
+const MARKET_DISCLAIMER_LINES = ['Market sentiment taken from data at time of publication.'];
 const MARKET_TITLE_WRAP_CHARS = 40;
 
 interface MarketOverlayLayout {
