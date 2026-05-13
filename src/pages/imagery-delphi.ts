@@ -36,6 +36,10 @@ const MAX_STRIPE_END_RADIUS_PX = 48;
 /**
  * Image library entries for the “view library” modal. Add `{ src, label }` URLs or
  * paths relative to the app base (e.g. `images/your-folder/photo.jpg`).
+ * Library PNGs under `public/images/library/` should keep the long edge at ~1920px or
+ * less so the generator stays fast; larger masters are resampled before shipping.
+ * To keep repo weight down, recompress after edits (e.g. oxipng -o4 --strip safe, then
+ * pngquant 256 --quality=78-95 --skip-if-larger on each file).
  */
 const RAW_LIBRARY_FILENAME_RE = /^delphi-library-image-(\d{3})\.png$/i;
 
@@ -83,6 +87,27 @@ const RAW_LIBRARY_FILES = sortRawLibraryFiles([
   'delphi-library-image-020.png',
   'delphi-library-image-021.png',
   'delphi-library-image-022.png',
+  'delphi-library-image-023.png',
+  'delphi-library-image-024.png',
+  'delphi-library-image-025.png',
+  'delphi-library-image-026.png',
+  'delphi-library-image-027.png',
+  'delphi-library-image-028.png',
+  'delphi-library-image-029.png',
+  'delphi-library-image-030.png',
+  'delphi-library-image-031.png',
+  'delphi-library-image-032.png',
+  'delphi-library-image-033.png',
+  'delphi-library-image-034.png',
+  'delphi-library-image-035.png',
+  'delphi-library-image-036.png',
+  'delphi-library-image-037.png',
+  'delphi-library-image-038.png',
+  'delphi-library-image-039.png',
+  'delphi-library-image-040.png',
+  'delphi-library-image-041.png',
+  'delphi-library-image-042.png',
+  'delphi-library-image-043.png',
 ]);
 
 validateRawLibraryFiles(RAW_LIBRARY_FILES);
