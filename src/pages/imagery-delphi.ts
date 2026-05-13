@@ -666,7 +666,6 @@ function buildMarketOverlayLayout(
   const titleLineH = fs * 1.24;
   const legendLineH = fs * 1.05;
   const disclaimerLineH = fs * 0.78;
-  const disclaimerLines = MARKET_DISCLAIMER_LINES;
   const rawPoints = md.options.map((opt, idx) => ({
     label: opt.label.trim() || `Option ${idx + 1}`,
     probability: Number.isFinite(opt.probability) ? Math.max(0, opt.probability) : 0,
@@ -751,6 +750,10 @@ function buildMarketOverlayLayout(
     titleLines = wrapTextByWidth(ctx, md.title, contentW, MARKET_TITLE_WRAP_CHARS);
     if (titleLines.length === 0) titleLines = [md.title.trim()];
   }
+
+  ctx.font = `${Math.round(fs * 0.58)}px ${FRAGMENT_MONO}`;
+  const disclaimerJoined = MARKET_DISCLAIMER_LINES.join(' ').trim();
+  const disclaimerLines = disclaimerJoined ? wrapTextByWidth(ctx, disclaimerJoined, contentW) : [];
 
   const titleH = titleLines.length * titleLineH;
   const totalW = pad * 2 + contentW;
