@@ -1191,6 +1191,55 @@ function drawCtaButton(
   ctx.restore();
 }
 
+function marketOverlayTheme(dark: boolean): {
+  outerBg: string;
+  outerStroke: string;
+  title: string;
+  chipFill: string;
+  chipStroke: string;
+  chipText: string;
+  panelBg: string;
+  sentimentHeader: string;
+  sentimentMuted: string;
+  barTrack: string;
+  legend: string;
+  legendMuted: string;
+  disclaimer: string;
+} {
+  if (dark) {
+    return {
+      outerBg: 'rgba(20, 20, 26, 0.96)',
+      outerStroke: 'rgba(255, 255, 255, 0.1)',
+      title: 'rgba(248, 248, 252, 0.96)',
+      chipFill: 'rgba(255, 255, 255, 0.07)',
+      chipStroke: 'rgba(255, 255, 255, 0.14)',
+      chipText: 'rgba(215, 215, 225, 0.92)',
+      panelBg: 'rgba(255, 255, 255, 0.05)',
+      sentimentHeader: 'rgba(220, 220, 230, 0.88)',
+      sentimentMuted: 'rgba(150, 150, 165, 0.55)',
+      barTrack: 'rgba(255, 255, 255, 0.11)',
+      legend: 'rgba(218, 218, 228, 0.9)',
+      legendMuted: 'rgba(145, 145, 160, 0.55)',
+      disclaimer: 'rgba(150, 150, 168, 0.52)',
+    };
+  }
+  return {
+    outerBg: 'rgba(245, 245, 243, 0.95)',
+    outerStroke: 'rgba(50, 50, 50, 0.08)',
+    title: 'rgba(36, 36, 36, 0.96)',
+    chipFill: 'rgba(0, 0, 0, 0.03)',
+    chipStroke: 'rgba(0, 0, 0, 0.08)',
+    chipText: 'rgba(20, 20, 20, 0.55)',
+    panelBg: 'rgba(0, 0, 0, 0.06)',
+    sentimentHeader: 'rgba(30, 30, 30, 0.72)',
+    sentimentMuted: 'rgba(30, 30, 30, 0.45)',
+    barTrack: 'rgba(0, 0, 0, 0.08)',
+    legend: 'rgba(28, 28, 28, 0.72)',
+    legendMuted: 'rgba(28, 28, 28, 0.52)',
+    disclaimer: 'rgba(28, 28, 28, 0.42)',
+  };
+}
+
 function drawMarketDataOverlay(
   ctx: CanvasRenderingContext2D,
   md: GraphicsLayers['marketData']
@@ -1199,14 +1248,15 @@ function drawMarketDataOverlay(
   const { fs, pad, chipH, sectionPad, sentimentTitleH, barH, gapAfterTitle, gapAfterChip, gapBeforeDisclaimer } = layout;
   const totalW = layout.totalW;
   const totalH = layout.totalH;
+  const theme = marketOverlayTheme(md.darkMode === true);
 
   ctx.save();
   const radius = fs * 0.42;
-  ctx.fillStyle = 'rgba(245, 245, 243, 0.95)';
+  ctx.fillStyle = theme.outerBg;
   ctx.beginPath();
   ctx.roundRect(md.x, md.y, totalW, totalH, radius);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(50, 50, 50, 0.08)';
+  ctx.strokeStyle = theme.outerStroke;
   ctx.lineWidth = 1;
   ctx.stroke();
 
@@ -1215,7 +1265,7 @@ function drawMarketDataOverlay(
 
   if (layout.titleLines.length > 0) {
     ctx.font = `600 ${Math.round(fs * 1.25)}px 'Figtree', sans-serif`;
-    ctx.fillStyle = 'rgba(36, 36, 36, 0.96)';
+    ctx.fillStyle = theme.title;
     ctx.textBaseline = 'top';
     for (const line of layout.titleLines) {
       ctx.fillText(line, leftX, curY);
@@ -1229,14 +1279,14 @@ function drawMarketDataOverlay(
     const chipText = md.volume;
     const chipWReal = ctx.measureText(chipText).width + fs * 1.1;
     const chipRadius = fs * 0.16;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.03)';
+    ctx.fillStyle = theme.chipFill;
     ctx.beginPath();
     ctx.roundRect(leftX, curY, chipWReal, chipH, chipRadius);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+    ctx.strokeStyle = theme.chipStroke;
     ctx.lineWidth = 1;
     ctx.stroke();
-    ctx.fillStyle = 'rgba(20, 20, 20, 0.55)';
+    ctx.fillStyle = theme.chipText;
     ctx.textBaseline = 'middle';
     ctx.fillText(chipText, leftX + fs * 0.55, curY + chipH / 2);
     curY += chipH + gapAfterChip;
@@ -1246,7 +1296,7 @@ function drawMarketDataOverlay(
   const sentimentY = curY;
   const sentimentW = totalW - pad * 2;
 
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+  ctx.fillStyle = theme.panelBg;
   ctx.beginPath();
   ctx.roundRect(sentimentX, sentimentY, sentimentW, layout.sentimentBlockH, fs * 0.26);
   ctx.fill();
@@ -1260,16 +1310,16 @@ function drawMarketDataOverlay(
 
   if (layout.multiOutcomeMode && layout.topTwoRanked.length > 0) {
     ctx.font = `${Math.round(fs * 0.72)}px ${FRAGMENT_MONO}`;
-    ctx.fillStyle = 'rgba(30, 30, 30, 0.72)';
+    ctx.fillStyle = theme.sentimentHeader;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     ctx.fillText('SENTIMENT', contentX, contentY);
     if (layout.overflowMoreCount > 0) {
-      ctx.fillStyle = 'rgba(30, 30, 30, 0.45)';
+      ctx.fillStyle = theme.sentimentMuted;
       ctx.textAlign = 'right';
       ctx.fillText(`(+${layout.overflowMoreCount} More)`, contentX + barW, contentY);
       ctx.textAlign = 'left';
-      ctx.fillStyle = 'rgba(30, 30, 30, 0.72)';
+      ctx.fillStyle = theme.sentimentHeader;
     }
 
     contentY += sentimentTitleH + fs * 0.45;
@@ -1280,7 +1330,7 @@ function drawMarketDataOverlay(
       const opt = layout.topTwoRanked[ti];
       const barY = contentY;
 
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+      ctx.fillStyle = theme.barTrack;
       ctx.beginPath();
       ctx.roundRect(barX, barY, barW, barH, barRadius);
       ctx.fill();
@@ -1295,7 +1345,7 @@ function drawMarketDataOverlay(
 
       contentY += barH + fs * 0.38;
       ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
-      ctx.fillStyle = 'rgba(28, 28, 28, 0.72)';
+      ctx.fillStyle = theme.legend;
       const percentText = pctStr(opt.probability);
       ctx.textAlign = 'left';
       ctx.fillText(opt.label, contentX, contentY);
@@ -1308,7 +1358,7 @@ function drawMarketDataOverlay(
     }
   } else {
     ctx.font = `${Math.round(fs * 0.72)}px ${FRAGMENT_MONO}`;
-    ctx.fillStyle = 'rgba(30, 30, 30, 0.7)';
+    ctx.fillStyle = theme.sentimentHeader;
     ctx.textBaseline = 'top';
     ctx.fillText('SENTIMENT', contentX, contentY);
     contentY += sentimentTitleH + fs * 0.55;
@@ -1316,7 +1366,7 @@ function drawMarketDataOverlay(
     const barY = contentY;
     const barRadius = barH / 2;
 
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+    ctx.fillStyle = theme.barTrack;
     ctx.beginPath();
     ctx.roundRect(barX, barY, barW, barH, barRadius);
     ctx.fill();
@@ -1336,7 +1386,7 @@ function drawMarketDataOverlay(
 
     contentY += barH + fs * 0.65;
     ctx.font = `${Math.round(fs * 0.82)}px ${FRAGMENT_MONO}`;
-    ctx.fillStyle = 'rgba(28, 28, 28, 0.72)';
+    ctx.fillStyle = theme.legend;
     ctx.textBaseline = 'top';
 
     if (points.length === 2) {
@@ -1353,14 +1403,14 @@ function drawMarketDataOverlay(
       const only = points[0];
       ctx.fillText(`${pctStr(only.probability)} ${only.label}`, contentX, contentY);
     } else if (points.length === 0) {
-      ctx.fillStyle = 'rgba(28, 28, 28, 0.52)';
+      ctx.fillStyle = theme.legendMuted;
       ctx.fillText('No sentiment data available', contentX, contentY);
     }
   }
 
   const disclaimerY = sentimentY + layout.sentimentBlockH + gapBeforeDisclaimer;
   ctx.font = `${Math.round(fs * 0.58)}px ${FRAGMENT_MONO}`;
-  ctx.fillStyle = 'rgba(28, 28, 28, 0.42)';
+  ctx.fillStyle = theme.disclaimer;
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
   for (let i = 0; i < layout.disclaimerLines.length; i++) {
@@ -3629,18 +3679,20 @@ export function createDelphiImageryPanel(
   mdSizeGroup.appendChild(mdSizeValue);
   marketDataControls.appendChild(mdSizeGroup);
 
-  const mdBarColorGroup = document.createElement('div');
-  mdBarColorGroup.style.cssText = 'display: flex; align-items: center; gap: 8px;';
-  const mdBarColorLabel = document.createElement('label');
-  mdBarColorLabel.textContent = 'Bar color';
-  mdBarColorLabel.style.cssText = LABEL_STYLE;
-  const mdBarColorInput = document.createElement('input');
-  mdBarColorInput.type = 'color';
-  mdBarColorInput.value = graphicsLayers.marketData.barColor;
-  mdBarColorInput.style.cssText = 'width: 40px; height: 32px; border: none; border-radius: 4px; cursor: pointer; padding: 0;';
-  mdBarColorGroup.appendChild(mdBarColorLabel);
-  mdBarColorGroup.appendChild(mdBarColorInput);
-  marketDataControls.appendChild(mdBarColorGroup);
+  const mdDarkWrap = document.createElement('div');
+  mdDarkWrap.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+  const mdDarkCheck = document.createElement('input');
+  mdDarkCheck.type = 'checkbox';
+  mdDarkCheck.id = 'market-data-dark';
+  mdDarkCheck.checked = graphicsLayers.marketData.darkMode === true;
+  mdDarkCheck.style.cssText = 'cursor: pointer;';
+  const mdDarkLabel = document.createElement('label');
+  mdDarkLabel.htmlFor = 'market-data-dark';
+  mdDarkLabel.textContent = 'Dark mode';
+  mdDarkLabel.style.cssText = `font-family: 'Fragment Mono', monospace; font-size: 8.5pt; color: var(--fg); opacity: 0.85; cursor: pointer;`;
+  mdDarkWrap.appendChild(mdDarkCheck);
+  mdDarkWrap.appendChild(mdDarkLabel);
+  marketDataControls.appendChild(mdDarkWrap);
 
   marketDataWrap.appendChild(marketDataControls);
   marketDataPanel.appendChild(marketDataWrap);
@@ -3711,8 +3763,8 @@ export function createDelphiImageryPanel(
     mdSizeValue.textContent = `${graphicsLayers.marketData.fontSize}px`;
     drawPreview();
   });
-  mdBarColorInput.addEventListener('input', () => {
-    graphicsLayers.marketData.barColor = mdBarColorInput.value;
+  mdDarkCheck.addEventListener('change', () => {
+    graphicsLayers.marketData.darkMode = mdDarkCheck.checked;
     drawPreview();
   });
   mdSearchInput.addEventListener('input', () => {
@@ -3874,6 +3926,7 @@ export function createDelphiImageryPanel(
     userLogoWInput.value = String(graphicsLayers.userLogo.width);
     mdSizeInput.value = String(graphicsLayers.marketData.fontSize);
     mdSizeValue.textContent = `${graphicsLayers.marketData.fontSize}px`;
+    mdDarkCheck.checked = graphicsLayers.marketData.darkMode === true;
     ctaSizeInput.value = String(graphicsLayers.cta.fontSize);
     ctaSizeValue.textContent = `${graphicsLayers.cta.fontSize}px`;
   };

@@ -109,8 +109,9 @@ export interface MarketDataLayer {
   title: string;
   volume: string;
   fontSize: number;
-  barColor: string;
   textColor: string;
+  /** Dark card / panel styling for the overlay on dark imagery. */
+  darkMode?: boolean;
 }
 
 export interface CtaLayer {
@@ -185,8 +186,8 @@ export const DEFAULT_MARKET_DATA_LAYER: MarketDataLayer = {
   title: '',
   volume: '',
   fontSize: 14,
-  barColor: '#367CD6',
   textColor: '#FFFFFF',
+  darkMode: false,
 };
 
 export const DEFAULT_CTA_LAYER: CtaLayer = {
