@@ -2,6 +2,9 @@ node_modules
 dist
 .DS_Store
 
+# --- Local planning notes (not shipped) ---
+planning/
+
 # --- Secrets & machine-local env (never commit real keys) ---
 .env
 .env.local

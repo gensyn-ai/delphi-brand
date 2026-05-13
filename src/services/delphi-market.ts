@@ -1,18 +1,7 @@
 import { createPublicClient, defineChain, http } from 'viem';
 
-interface DelphiApiMarket {
-  id: string;
-  category?: string;
-  status?: string;
-  metadata?: unknown;
-  [key: string]: unknown;
-}
-
-interface DelphiApiListMarketsResponse {
-  markets: DelphiApiMarket[] | null;
-}
-
 type SentimentPoint = { label: string; probability: number };
+
 const CYRILLIC_TO_LATIN: Record<string, string> = {
   а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', х: 'x', у: 'y', к: 'k', м: 'm', т: 't', в: 'b', н: 'h',
   А: 'A', Е: 'E', О: 'O', Р: 'P', С: 'C', Х: 'X', У: 'Y', К: 'K', М: 'M', Т: 'T', В: 'B', Н: 'H',
@@ -34,33 +23,33 @@ export interface DelphiMarketOverlayData {
   sentiment: SentimentPoint[];
 }
 
-const DEFAULT_API_BASE_URL = '/api/delphi';
-const NETWORK_DEFAULTS = {
-  mainnet: {
-    apiBaseUrl: 'https://api.delphi.fyi',
-    marketBaseUrl: 'https://app.delphi.fyi/markets',
-    rpcUrl: 'https://gensyn-mainnet.g.alchemy.com/public',
-    gatewayAddress: '0x4e4e85c52E0F414cc67eE88d0C649Ec81698d700' as const,
-  },
-  testnet: {
-    apiBaseUrl: 'https://delphi-api.gensyn.ai',
-    marketBaseUrl: 'https://testnet.delphi.fyi/markets',
-    rpcUrl: 'https://gensyn-testnet.g.alchemy.com/public',
-    gatewayAddress: '0x7b8FDBD187B0Be5e30e48B1995df574A62667147' as const,
-  },
-} as const;
+// Response shapes returned by the delphi-creator-api Worker.
+// Narrowed to the fields the overlay reads — the worker also returns
+// modelIdentifier, deadlines, etc., which we don't need here.
+interface CreatorApiMarket {
+  marketAddress: string;
+  question: string | null;
+  outcomes: string[] | null;
+  status: 'open' | 'awaiting_settlement' | 'settled' | 'expired';
+  category: string | null;
+  flagged: boolean | null;
+}
+interface PaginatedResponse<T> { data: T[] }
+interface ApiResponse<T> { data: T }
+
+const DEFAULT_CREATOR_API_BASE_URL = 'https://delphi-creator-api.gensyn.workers.dev';
+const MARKET_BASE_URL = 'https://app.delphi.fyi/markets';
+const MAINNET_RPC_URL = 'https://gensyn-mainnet.g.alchemy.com/public';
+const MAINNET_GATEWAY_ADDRESS = '0x4e4e85c52E0F414cc67eE88d0C649Ec81698d700' as const;
+const SEARCH_PAGE_SIZE = 12;
+
 const GENSYN_MAINNET = defineChain({
   id: 685689,
   name: 'Gensyn Mainnet',
   nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: { default: { http: [NETWORK_DEFAULTS.mainnet.rpcUrl] } },
+  rpcUrls: { default: { http: [MAINNET_RPC_URL] } },
 });
-const GENSYN_TESTNET = defineChain({
-  id: 685685,
-  name: 'Gensyn Testnet',
-  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: { default: { http: [NETWORK_DEFAULTS.testnet.rpcUrl] } },
-});
+
 const DYNAMIC_PARIMUTUEL_GATEWAY_ABI = [
   {
     inputs: [
@@ -77,81 +66,31 @@ const DYNAMIC_PARIMUTUEL_GATEWAY_ABI = [
 const searchCache = new Map<string, DelphiMarketSearchResult[]>();
 const marketCache = new Map<string, DelphiMarketOverlayData>();
 let chainReader: ReturnType<typeof createPublicClient> | null = null;
-const SEARCH_PAGE_SIZE = 50;
-const SEARCH_MAX_PAGES = 3;
 
-function getDelphiNetwork(): 'testnet' | 'mainnet' {
-  return import.meta.env.VITE_DELPHI_NETWORK === 'testnet' ? 'testnet' : 'mainnet';
+function getCreatorApiBaseUrl(): string {
+  // Dev: route through the Vite proxy so the worker host stays out of
+  // browser same-origin checks. Prod: hit the Worker directly using the
+  // CORS allowlist baked into workers/creator-api.
+  if (import.meta.env.DEV) return '/api/creator-api';
+  return (import.meta.env.VITE_DELPHI_CREATOR_API_URL ?? DEFAULT_CREATOR_API_BASE_URL).replace(/\/+$/, '');
 }
 
-function getApiBaseUrl(): string {
-  const network = getDelphiNetwork();
-  const defaultBase = import.meta.env.DEV
-    ? DEFAULT_API_BASE_URL
-    : NETWORK_DEFAULTS[network].apiBaseUrl;
-  return (import.meta.env.VITE_DELPHI_API_BASE_URL ?? defaultBase).replace(/\/+$/, '');
-}
-
-function getMarketBaseUrl(): string {
-  const network = getDelphiNetwork();
-  return (import.meta.env.VITE_DELPHI_MARKET_BASE_URL ?? NETWORK_DEFAULTS[network].marketBaseUrl).replace(/\/+$/, '');
-}
-
-function getApiKey(): string {
-  const network = getDelphiNetwork();
-  const key = network === 'testnet'
-    ? (import.meta.env.VITE_DELPHI_API_ACCESS_KEY_TESTNET ?? import.meta.env.VITE_DELPHI_API_ACCESS_KEY)
-    : (import.meta.env.VITE_DELPHI_API_ACCESS_KEY_MAINNET ?? import.meta.env.VITE_DELPHI_API_ACCESS_KEY);
-  if (!key) {
-    throw new Error(
-      network === 'testnet'
-        ? 'Missing testnet API key. Add VITE_DELPHI_API_ACCESS_KEY_TESTNET (or VITE_DELPHI_API_ACCESS_KEY) and restart dev server.'
-        : 'Missing mainnet API key. Add VITE_DELPHI_API_ACCESS_KEY_MAINNET (or VITE_DELPHI_API_ACCESS_KEY) and restart dev server.'
-    );
-  }
-  return key;
-}
-
-async function apiGet<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T> {
-  const apiBase = getApiBaseUrl();
-  const base = /^https?:\/\//i.test(apiBase)
-    ? apiBase
-    : new URL(apiBase.replace(/^\//, ''), window.location.origin + '/').toString();
-  const url = new URL(path.replace(/^\//, ''), `${base.replace(/\/+$/, '')}/`);
+async function fetchCreatorApi<T>(path: string, query?: Record<string, string | number | undefined>): Promise<T> {
+  const base = getCreatorApiBaseUrl();
+  const url = /^https?:\/\//i.test(base)
+    ? new URL(path.replace(/^\//, ''), `${base}/`)
+    : new URL(`${base.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`, window.location.origin);
   if (query) {
-    for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined) {
-        url.searchParams.set(key, String(value));
-      }
+    for (const [k, v] of Object.entries(query)) {
+      if (v !== undefined) url.searchParams.set(k, String(v));
     }
   }
-  const res = await fetch(url.toString(), {
-    headers: {
-      Accept: 'application/json',
-      'X-API-Key': getApiKey(),
-    },
-  });
+  const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
   if (!res.ok) {
     const body = await res.text();
-    if (res.status === 401 && getDelphiNetwork() === 'testnet' && !import.meta.env.VITE_DELPHI_API_ACCESS_KEY_TESTNET) {
-      throw new Error('Delphi testnet API rejected this key (401). Add VITE_DELPHI_API_ACCESS_KEY_TESTNET from https://delphi-api-access.gensyn.ai/ and restart dev server.');
-    }
-    throw new Error(`Delphi API request failed (${res.status}): ${body || 'unknown error'}`);
+    throw new Error(`Delphi creator API request failed (${res.status}): ${body || 'unknown error'}`);
   }
   return (await res.json()) as T;
-}
-
-function extractMetadata(market: DelphiApiMarket): Record<string, unknown> {
-  const meta = market.metadata;
-  if (!meta || typeof meta !== 'object') return {};
-  return meta as Record<string, unknown>;
-}
-
-function normalizeTitle(market: DelphiApiMarket): string {
-  const metadata = extractMetadata(market);
-  const question = metadata.question;
-  if (typeof question === 'string' && question.trim()) return question.trim();
-  return market.id;
 }
 
 function normalizeSearchText(input: string): string {
@@ -160,39 +99,9 @@ function normalizeSearchText(input: string): string {
   return mapped
     .normalize('NFKD')
     .toLowerCase()
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/[̀-ͯ]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function marketSearchCorpus(market: DelphiApiMarket): string {
-  const title = normalizeTitle(market);
-  const metadata = extractMetadata(market);
-  const outcomes = Array.isArray(metadata.outcomes) ? metadata.outcomes.filter((o): o is string => typeof o === 'string') : [];
-  return normalizeSearchText([title, market.category ?? '', ...outcomes].join(' '));
-}
-
-function marketMatchesQuery(market: DelphiApiMarket, normalizedQuery: string): boolean {
-  const corpus = marketSearchCorpus(market);
-  if (!normalizedQuery || !corpus) return false;
-  if (corpus.includes(normalizedQuery)) return true;
-  const tokens = normalizedQuery.split(' ').filter((t) => t.length >= 3);
-  if (tokens.length === 0) return false;
-  let hits = 0;
-  for (const token of tokens) {
-    if (corpus.includes(token)) hits += 1;
-  }
-  return hits >= Math.min(2, tokens.length);
-}
-
-function normalizeOutcomeLabels(market: DelphiApiMarket): string[] {
-  const metadata = extractMetadata(market);
-  const outcomes = metadata.outcomes;
-  if (!Array.isArray(outcomes)) return [];
-  return outcomes
-    .map((o) => (typeof o === 'string' ? o.trim() : ''))
-    .filter(Boolean);
 }
 
 function toFloat(value: unknown): number | null {
@@ -212,9 +121,8 @@ function normalizeProbabilities(raw: unknown): number[] {
   if (!Array.isArray(raw)) return [];
   const values = raw.map(toFloat).filter((n): n is number => n !== null && n >= 0);
   if (values.length === 0) return [];
-
   const maxValue = Math.max(...values);
-  // 1e18 fixed-point values from chain reads.
+  // 1e18 fixed-point values come back from on-chain reads.
   if (maxValue > 1) {
     const scaled = values.map((n) => (n > 1_000_000 ? n / 1e18 : n));
     const sumScaled = scaled.reduce((a, b) => a + b, 0);
@@ -227,140 +135,89 @@ function normalizeProbabilities(raw: unknown): number[] {
 
 function getChainReader(): ReturnType<typeof createPublicClient> {
   if (chainReader) return chainReader;
-  const network = getDelphiNetwork();
-  const rpcUrl = import.meta.env.VITE_DELPHI_RPC_URL ?? NETWORK_DEFAULTS[network].rpcUrl;
-  chainReader = createPublicClient({
-    chain: network === 'testnet' ? GENSYN_TESTNET : GENSYN_MAINNET,
-    transport: http(rpcUrl),
-  });
+  chainReader = createPublicClient({ chain: GENSYN_MAINNET, transport: http(MAINNET_RPC_URL) });
   return chainReader;
 }
 
-async function fetchOnChainImpliedProbabilities(marketId: string, outcomeCount: number): Promise<number[]> {
-  if (!/^0x[a-fA-F0-9]{40}$/.test(marketId) || outcomeCount < 1) return [];
+async function fetchOnChainImpliedProbabilities(marketAddress: string, outcomeCount: number): Promise<number[]> {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(marketAddress) || outcomeCount < 1) return [];
   const indices = Array.from({ length: outcomeCount }, (_, i) => BigInt(i));
-  const network = getDelphiNetwork();
-  const gateway = (import.meta.env.VITE_DELPHI_GATEWAY_ADDRESS ?? NETWORK_DEFAULTS[network].gatewayAddress) as `0x${string}`;
   const probs = await getChainReader().readContract({
-    address: gateway,
+    address: MAINNET_GATEWAY_ADDRESS,
     abi: DYNAMIC_PARIMUTUEL_GATEWAY_ABI,
     functionName: 'spotImpliedProbabilities',
-    args: [marketId as `0x${string}`, indices],
+    args: [marketAddress as `0x${string}`, indices],
   });
   return normalizeProbabilities(probs);
 }
 
-function buildSentiment(market: DelphiApiMarket): SentimentPoint[] {
-  const metadata = extractMetadata(market);
-  const labels = normalizeOutcomeLabels(market);
-  const probabilityCandidates = [
-    (metadata as Record<string, unknown>).impliedProbabilities,
-    (metadata as Record<string, unknown>).probabilities,
-    (metadata as Record<string, unknown>).outcomeProbabilities,
-    (market as Record<string, unknown>).impliedProbabilities,
-    (market as Record<string, unknown>).probabilities,
-    (market as Record<string, unknown>).outcomeProbabilities,
-  ];
-  let probabilities: number[] = [];
-  for (const candidate of probabilityCandidates) {
-    probabilities = normalizeProbabilities(candidate);
-    if (probabilities.length > 0) break;
+function buildFallbackSentiment(labels: string[]): SentimentPoint[] {
+  if (labels.length === 0) {
+    return [
+      { label: 'Yes', probability: 0.5 },
+      { label: 'No', probability: 0.5 },
+    ];
   }
-
-  if (probabilities.length === 0 && labels.length > 0) {
-    const equalProb = 1 / labels.length;
-    probabilities = labels.map(() => equalProb);
-  }
-  if (probabilities.length === 0) {
-    probabilities = [0.5, 0.5];
-  }
-
-  const fallbackLabels = probabilities.length === 2
-    ? ['Yes', 'No']
-    : probabilities.map((_, idx) => `Option ${idx + 1}`);
-  const finalLabels = labels.length === probabilities.length ? labels : fallbackLabels;
-
-  return probabilities.map((probability, idx) => ({
-    label: finalLabels[idx] ?? `Option ${idx + 1}`,
-    probability: Math.min(1, Math.max(0, probability)),
-  }));
+  const equalProb = 1 / labels.length;
+  return labels.map((label) => ({ label, probability: equalProb }));
 }
 
-function normalizeSearchResult(market: DelphiApiMarket): DelphiMarketSearchResult {
+function toSearchResult(market: CreatorApiMarket): DelphiMarketSearchResult {
   return {
-    id: market.id,
-    title: normalizeTitle(market),
-    category: typeof market.category === 'string' ? market.category : 'unknown',
-    status: typeof market.status === 'string' ? market.status : 'unknown',
-  };
-}
-
-async function toOverlayData(market: DelphiApiMarket): Promise<DelphiMarketOverlayData> {
-  const labels = normalizeOutcomeLabels(market);
-  let sentiment = buildSentiment(market);
-  try {
-    const onChainProbabilities = await fetchOnChainImpliedProbabilities(market.id, labels.length);
-    if (onChainProbabilities.length === labels.length && labels.length > 0) {
-      sentiment = onChainProbabilities.map((probability, idx) => ({
-        label: labels[idx],
-        probability,
-      }));
-    }
-  } catch {
-    // Keep REST/fallback sentiment when chain reads are unavailable.
-  }
-  return {
-    id: market.id,
-    title: normalizeTitle(market),
-    url: `${getMarketBaseUrl()}/${encodeURIComponent(market.id)}`,
-    category: typeof market.category === 'string' ? market.category : 'unknown',
-    status: typeof market.status === 'string' ? market.status : 'unknown',
-    sentiment,
+    id: market.marketAddress,
+    title: market.question?.trim() || market.marketAddress,
+    category: market.category ?? 'unknown',
+    status: market.status,
   };
 }
 
 export async function searchDelphiMarkets(query: string): Promise<DelphiMarketSearchResult[]> {
-  const normalizedQuery = normalizeSearchText(query);
-  if (!normalizedQuery) return [];
-  if (searchCache.has(normalizedQuery)) {
-    return searchCache.get(normalizedQuery) ?? [];
-  }
+  const transliterated = normalizeSearchText(query);
+  if (!transliterated) return [];
+  if (searchCache.has(transliterated)) return searchCache.get(transliterated) ?? [];
 
-  const markets: DelphiApiMarket[] = [];
-  const seenIds = new Set<string>();
-  for (let page = 0; page < SEARCH_MAX_PAGES; page++) {
-    const payload = await apiGet<DelphiApiListMarketsResponse>('/markets', {
-      orderBy: 'liquidity',
-      limit: SEARCH_PAGE_SIZE,
-      skip: page * SEARCH_PAGE_SIZE,
-    });
-    const batch = payload.markets ?? [];
-    for (const market of batch) {
-      if (!seenIds.has(market.id)) {
-        seenIds.add(market.id);
-        markets.push(market);
-      }
-    }
-    if (batch.length < SEARCH_PAGE_SIZE) break;
-  }
+  const payload = await fetchCreatorApi<PaginatedResponse<CreatorApiMarket>>('/markets', {
+    q: transliterated,
+    status: 'open',
+    pageSize: SEARCH_PAGE_SIZE,
+  });
+  const results = (payload.data ?? [])
+    .filter((m) => m.flagged !== true) // hide flagged on top of the server-side status filter
+    .map(toSearchResult);
 
-  const matchedMarkets = markets.filter((market) => marketMatchesQuery(market, normalizedQuery));
-  const results = matchedMarkets
-    .map(normalizeSearchResult)
-    .slice(0, 12);
-
-  searchCache.set(normalizedQuery, results);
+  searchCache.set(transliterated, results);
   return results;
 }
 
 export async function getDelphiMarketOverlayData(marketId: string): Promise<DelphiMarketOverlayData> {
-  const key = marketId.trim();
+  const key = marketId.trim().toLowerCase();
   if (!key) throw new Error('Market ID is required.');
   if (marketCache.has(key)) return marketCache.get(key)!;
 
-  const market = await apiGet<DelphiApiMarket>(`/markets/${encodeURIComponent(key)}`);
-  const overlay = await toOverlayData(market);
+  const payload = await fetchCreatorApi<ApiResponse<CreatorApiMarket>>(
+    `/markets/${encodeURIComponent(key)}`,
+  );
+  const detail = payload.data;
+  const labels = Array.isArray(detail.outcomes) ? detail.outcomes.filter((s): s is string => typeof s === 'string' && !!s.trim()) : [];
+
+  let sentiment = buildFallbackSentiment(labels);
+  try {
+    const onChainProbabilities = await fetchOnChainImpliedProbabilities(detail.marketAddress, labels.length);
+    if (onChainProbabilities.length === labels.length && labels.length > 0) {
+      sentiment = onChainProbabilities.map((probability, idx) => ({ label: labels[idx], probability }));
+    }
+  } catch {
+    // Keep equal-probability fallback when the chain read is unavailable.
+  }
+
+  const overlay: DelphiMarketOverlayData = {
+    id: detail.marketAddress,
+    title: detail.question?.trim() || detail.marketAddress,
+    url: `${MARKET_BASE_URL}/${encodeURIComponent(detail.marketAddress)}`,
+    category: detail.category ?? 'unknown',
+    status: detail.status,
+    sentiment,
+  };
   marketCache.set(key, overlay);
   return overlay;
 }
-

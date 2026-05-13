@@ -3,10 +3,7 @@ import { resolve } from 'path';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const network = env.VITE_DELPHI_NETWORK === 'testnet' ? 'testnet' : 'mainnet';
-  const proxyTarget = network === 'testnet'
-    ? 'https://delphi-api.gensyn.ai'
-    : 'https://api.delphi.fyi';
+  const creatorApiTarget = (env.VITE_DELPHI_CREATOR_API_URL ?? 'https://delphi-creator-api.gensyn.workers.dev').replace(/\/+$/, '');
 
   return {
     resolve: {
@@ -17,10 +14,14 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       proxy: {
-        '/api/delphi': {
-          target: proxyTarget,
+        // The Market data overlay reads from the delphi-creator-api Worker
+        // (workers/creator-api/ in delphi-stats-dashboard). Routing dev
+        // traffic through Vite keeps the worker host out of the browser's
+        // same-origin checks.
+        '/api/creator-api': {
+          target: creatorApiTarget,
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api\/delphi/, ''),
+          rewrite: (path) => path.replace(/^\/api\/creator-api/, ''),
         },
       },
     },

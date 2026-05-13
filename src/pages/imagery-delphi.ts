@@ -3545,33 +3545,12 @@ export function createDelphiImageryPanel(
   marketDataHint.style.cssText = `font-family: 'Fragment Mono', monospace; font-size: 8pt; color: var(--fg); opacity: 0.5; margin: 0;`;
   marketDataWrap.appendChild(marketDataHint);
 
-  const hasDelphiApiKey = Boolean(
-    import.meta.env.VITE_DELPHI_API_ACCESS_KEY
-    || import.meta.env.VITE_DELPHI_API_ACCESS_KEY_MAINNET
-  );
-  const mdSettingsHint = document.createElement('div');
-  mdSettingsHint.style.cssText = `
-    display: ${hasDelphiApiKey ? 'none' : 'block'};
-    border: 1px dashed rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.2);
-    border-radius: 6px;
-    padding: 10px 12px;
-    background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.03);
-    font-family: 'Fragment Mono', monospace;
-    font-size: 7.5pt;
-    color: var(--fg);
-    opacity: 0.75;
-    line-height: 1.5;
-  `;
-  mdSettingsHint.textContent = 'Market search is disabled. Add VITE_DELPHI_API_ACCESS_KEY (or VITE_DELPHI_API_ACCESS_KEY_MAINNET) to your .env file, then restart the dev server.';
-  marketDataWrap.appendChild(mdSettingsHint);
-
   const mdSearchWrap = document.createElement('div');
   mdSearchWrap.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
 
   const mdSearchInput = document.createElement('input');
   mdSearchInput.type = 'text';
   mdSearchInput.placeholder = 'Search market (e.g. BTC, ETH, election...)';
-  mdSearchInput.disabled = !hasDelphiApiKey;
   mdSearchInput.style.cssText = `
     width: 100%;
     padding: 8px 12px;
@@ -3587,9 +3566,7 @@ export function createDelphiImageryPanel(
 
   const mdSearchStatus = document.createElement('p');
   mdSearchStatus.style.cssText = `margin: 0; font-family: 'Fragment Mono', monospace; font-size: 7.5pt; color: var(--fg); opacity: 0.55;`;
-  mdSearchStatus.textContent = hasDelphiApiKey
-    ? 'Type to search open Delphi markets.'
-    : 'Search unavailable until a Delphi API key is configured.';
+  mdSearchStatus.textContent = 'Type to search Delphi markets.';
   mdSearchWrap.appendChild(mdSearchStatus);
 
   const mdResults = document.createElement('div');
@@ -3603,41 +3580,6 @@ export function createDelphiImageryPanel(
   `;
   mdSearchWrap.appendChild(mdResults);
   marketDataWrap.appendChild(mdSearchWrap);
-
-  const mdLinkRow = document.createElement('div');
-  mdLinkRow.style.cssText = 'display: none; align-items: center; gap: 10px; flex-wrap: wrap;';
-  const mdLinkLabel = document.createElement('span');
-  mdLinkLabel.textContent = 'Market URL';
-  mdLinkLabel.style.cssText = LABEL_STYLE;
-  const mdLink = document.createElement('a');
-  mdLink.href = '#';
-  mdLink.target = '_blank';
-  mdLink.rel = 'noopener noreferrer';
-  mdLink.textContent = 'Open market';
-  mdLink.style.cssText = `
-    font-family: 'Fragment Mono', monospace;
-    font-size: 8pt;
-    color: var(--fg);
-    opacity: 0.8;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  `;
-  const mdCopyLink = document.createElement('button');
-  mdCopyLink.type = 'button';
-  mdCopyLink.textContent = 'Copy URL';
-  mdCopyLink.style.cssText = `
-    font-family: 'Fragment Mono', monospace;
-    font-size: 7.5pt;
-    color: var(--fg);
-    opacity: 0.7;
-    background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08);
-    border: ${BORDER};
-    border-radius: 999px;
-    padding: 3px 10px;
-    cursor: pointer;
-  `;
-  mdLinkRow.append(mdLinkLabel, mdLink, mdCopyLink);
-  marketDataWrap.appendChild(mdLinkRow);
 
   const marketDataControls = document.createElement('div');
   marketDataControls.style.cssText = 'display: flex; align-items: center; gap: 16px; flex-wrap: wrap;';
@@ -3680,7 +3622,6 @@ export function createDelphiImageryPanel(
 
   let marketSearchTimer: ReturnType<typeof setTimeout> | null = null;
   let marketSearchRequestId = 0;
-  let activeMarketUrl = '';
 
   const renderMarketResults = (items: DelphiMarketSearchResult[]): void => {
     mdResults.innerHTML = '';
@@ -3723,9 +3664,6 @@ export function createDelphiImageryPanel(
           graphicsLayers.marketData.volume = details.category;
           graphicsLayers.marketData.x = 0;
           graphicsLayers.marketData.y = 0;
-          activeMarketUrl = details.url;
-          mdLink.href = details.url;
-          mdLinkRow.style.display = 'flex';
           mdSearchInput.value = details.title;
           mdResults.style.display = 'none';
           mdSearchStatus.textContent = 'Market overlay loaded.';
@@ -3759,7 +3697,7 @@ export function createDelphiImageryPanel(
       marketSearchTimer = null;
     }
     if (!query) {
-      mdSearchStatus.textContent = 'Type to search open Delphi markets.';
+      mdSearchStatus.textContent = 'Type to search Delphi markets.';
       renderMarketResults([]);
       return;
     }
@@ -3780,15 +3718,6 @@ export function createDelphiImageryPanel(
         mdSearchStatus.textContent = message;
       }
     }, 300);
-  });
-  mdCopyLink.addEventListener('click', async () => {
-    if (!activeMarketUrl) return;
-    try {
-      await navigator.clipboard.writeText(activeMarketUrl);
-      mdSearchStatus.textContent = 'Market URL copied.';
-    } catch {
-      mdSearchStatus.textContent = 'Could not copy URL. You can still open it.';
-    }
   });
 
   // CTA button layer
