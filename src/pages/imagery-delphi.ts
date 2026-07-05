@@ -221,6 +221,55 @@ const LABEL_STYLE = `
   margin-bottom: 6px;
 `;
 
+/** Selectable ink colours for the Delphi logo, symbol and strapline overlays. */
+const BRAND_LOGO_COLORS: Array<{ label: string; value: string }> = [
+  { label: 'Black', value: '#000000' },
+  { label: 'White', value: '#FFFFFF' },
+  { label: '#EFEFEB', value: '#EFEFEB' },
+  { label: '#367CD6', value: '#367CD6' },
+  { label: '#F3B295', value: '#F3B295' },
+  { label: '#513238', value: '#513238' },
+];
+
+/** Build a small colour-swatch row for a brand overlay layer. */
+function createBrandColorRow(current: string, onPick: (color: string) => void): HTMLElement {
+  const row = document.createElement('div');
+  row.style.cssText = 'display: flex; align-items: center; gap: 8px; flex-wrap: wrap;';
+  const label = document.createElement('span');
+  label.textContent = 'Colour';
+  label.style.cssText = LABEL_STYLE + ' margin-bottom: 0;';
+  row.appendChild(label);
+  const norm = (c: string) => c.trim().toLowerCase();
+  let selected = norm(current);
+  const swatchStyle = (active: boolean, value: string) => `
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    cursor: pointer;
+    padding: 0;
+    background: ${value};
+    border: 1px solid rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.35);
+    box-shadow: ${active ? '0 0 0 2px var(--bg), 0 0 0 4px var(--fg)' : 'none'};
+    transition: box-shadow 0.15s ease;
+  `;
+  const swatches: Array<{ btn: HTMLButtonElement; value: string }> = [];
+  for (const opt of BRAND_LOGO_COLORS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = opt.label;
+    btn.setAttribute('aria-label', `${opt.label} logo colour`);
+    btn.style.cssText = swatchStyle(norm(opt.value) === selected, opt.value);
+    btn.addEventListener('click', () => {
+      selected = norm(opt.value);
+      for (const s of swatches) s.btn.style.cssText = swatchStyle(norm(s.value) === selected, s.value);
+      onPick(opt.value);
+    });
+    swatches.push({ btn, value: opt.value });
+    row.appendChild(btn);
+  }
+  return row;
+}
+
 const INSTRUMENT_SERIF = '"Instrument Serif", serif';
 const FRAGMENT_MONO = '"Fragment Mono", monospace';
 const LAYER_PADDING = 16;
@@ -811,6 +860,36 @@ function clampGraphicsLayersToCanvasBounds(
 }
 
 /**
+ * Recolour a white-source brand SVG to an arbitrary ink colour.
+ * Uses source-in compositing (keeps alpha shape, replaces RGB). Cached per source+colour.
+ */
+const brandTintCache = new WeakMap<HTMLImageElement, Map<string, HTMLCanvasElement>>();
+function getTintedBrandImage(img: HTMLImageElement, color: string | undefined): CanvasImageSource {
+  const normalized = (color ?? '#FFFFFF').trim().toLowerCase();
+  if (normalized === '#ffffff' || normalized === 'white' || normalized === '') return img;
+  let perImage = brandTintCache.get(img);
+  if (!perImage) {
+    perImage = new Map();
+    brandTintCache.set(img, perImage);
+  }
+  const cached = perImage.get(normalized);
+  if (cached) return cached;
+  const w = Math.max(1, img.naturalWidth);
+  const h = Math.max(1, img.naturalHeight);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const cctx = canvas.getContext('2d');
+  if (!cctx) return img;
+  cctx.drawImage(img, 0, 0, w, h);
+  cctx.globalCompositeOperation = 'source-in';
+  cctx.fillStyle = color ?? '#FFFFFF';
+  cctx.fillRect(0, 0, w, h);
+  perImage.set(normalized, canvas);
+  return canvas;
+}
+
+/**
  * Draw optional graphics layers on top of the effect.
  * Painter order: earlier = underneath. Strapline is drawn after headline so a centred headline
  * does not paint over the centred strapline.
@@ -834,14 +913,16 @@ function drawGraphicsLayers(
     const img = brandImages.delphiSymbol;
     const scale = layers.delphiSymbol.width / img.naturalWidth;
     const dh = img.naturalHeight * scale;
-    ctx.drawImage(img, layers.delphiSymbol.x, layers.delphiSymbol.y, layers.delphiSymbol.width, dh);
+    const src = getTintedBrandImage(img, layers.delphiSymbol.color);
+    ctx.drawImage(src, layers.delphiSymbol.x, layers.delphiSymbol.y, layers.delphiSymbol.width, dh);
   }
   // Delphi logo
   if (layers.delphiLogo.enabled && brandImages.delphiLogo && layers.delphiLogo.width > 0) {
     const img = brandImages.delphiLogo;
     const scale = layers.delphiLogo.width / img.naturalWidth;
     const dh = img.naturalHeight * scale;
-    ctx.drawImage(img, layers.delphiLogo.x, layers.delphiLogo.y, layers.delphiLogo.width, dh);
+    const src = getTintedBrandImage(img, layers.delphiLogo.color);
+    ctx.drawImage(src, layers.delphiLogo.x, layers.delphiLogo.y, layers.delphiLogo.width, dh);
   }
   // Headline (Instrument Serif, multi-line: split on newline, blank lines add spacing)
   if (layers.headline.enabled && layers.headline.text.trim()) {
@@ -862,7 +943,8 @@ function drawGraphicsLayers(
     const img = brandImages.strapline;
     const m = straplineDrawMetrics(layers.strapline, img, brandImages.straplineTrim);
     if (m) {
-      ctx.drawImage(img, m.sx, m.sy, m.sw, m.sh, layers.strapline.x, layers.strapline.y, m.dw, m.dh);
+      const src = getTintedBrandImage(img, layers.strapline.color);
+      ctx.drawImage(src, m.sx, m.sy, m.sw, m.sh, layers.strapline.x, layers.strapline.y, m.dw, m.dh);
     }
   }
   // Market data overlay
@@ -3148,6 +3230,12 @@ export function createDelphiImageryPanel(
   delphiLogoControls.appendChild(delphiLogoWLabel);
   delphiLogoControls.appendChild(delphiLogoWInput);
   delphiLogoWrap.appendChild(delphiLogoControls);
+  delphiLogoWrap.appendChild(
+    createBrandColorRow(graphicsLayers.delphiLogo.color ?? '#FFFFFF', (color) => {
+      graphicsLayers.delphiLogo.color = color;
+      drawPreview();
+    })
+  );
   graphicsSection.appendChild(delphiLogoWrap);
 
   delphiLogoCheck.addEventListener('change', () => {
@@ -3203,6 +3291,12 @@ export function createDelphiImageryPanel(
   delphiSymbolControls.appendChild(delphiSymbolWLabel);
   delphiSymbolControls.appendChild(delphiSymbolWInput);
   delphiSymbolWrap.appendChild(delphiSymbolControls);
+  delphiSymbolWrap.appendChild(
+    createBrandColorRow(graphicsLayers.delphiSymbol.color ?? '#FFFFFF', (color) => {
+      graphicsLayers.delphiSymbol.color = color;
+      drawPreview();
+    })
+  );
   graphicsSection.appendChild(delphiSymbolWrap);
 
   delphiSymbolCheck.addEventListener('change', () => {
@@ -3253,6 +3347,12 @@ export function createDelphiImageryPanel(
   straplineControls.appendChild(straplineWLabel);
   straplineControls.appendChild(straplineWInput);
   straplineWrap.appendChild(straplineControls);
+  straplineWrap.appendChild(
+    createBrandColorRow(graphicsLayers.strapline.color ?? '#FFFFFF', (color) => {
+      graphicsLayers.strapline.color = color;
+      drawPreview();
+    })
+  );
   const straplineHint = document.createElement('p');
   straplineHint.textContent =
     'Default: centre of image. Drag on preview to move; release near centre snaps with blue guide lines.';

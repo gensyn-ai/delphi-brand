@@ -82,6 +82,8 @@ export interface DelphiLogoLayer {
   x: number;
   y: number;
   width: number;
+  /** Ink colour for the (white-source) SVG. Defaults to white. */
+  color?: string;
 }
 
 export interface UserLogoLayer {
@@ -144,6 +146,7 @@ export const DEFAULT_DELPHI_LOGO_LAYER: DelphiLogoLayer = {
   x: 0,
   y: 0,
   width: 120,
+  color: '#FFFFFF',
 };
 
 export const DEFAULT_DELPHI_SYMBOL_LAYER: DelphiLogoLayer = {
@@ -151,6 +154,7 @@ export const DEFAULT_DELPHI_SYMBOL_LAYER: DelphiLogoLayer = {
   x: 0,
   y: 0,
   width: 56,
+  color: '#FFFFFF',
 };
 
 /** “Make Your Market” strapline SVG (same fields as logotype layer). */
@@ -159,6 +163,7 @@ export const DEFAULT_STRAPLINE_LAYER: DelphiLogoLayer = {
   x: 0,
   y: 0,
   width: 480,
+  color: '#FFFFFF',
 };
 
 export const DEFAULT_USER_LOGO_LAYER: UserLogoLayer = {
