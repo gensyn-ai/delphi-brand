@@ -1,4 +1,10 @@
 import { overlayPadding, isMobile } from '../responsive';
+import {
+  IMAGE_LIBRARY_ITEMS,
+  IMAGE_LIBRARY_POPULATED_CATEGORIES,
+  imageLibraryRelativePath,
+  labelFromLibraryFilename,
+} from '../data/image-library';
 import { createDelphiImageryPanel, fetchDelphiEffectConfig } from './imagery-delphi';
 
 interface AssetStar {
@@ -21,11 +27,6 @@ interface PaletteEntry {
   hex: string;
   rgb: string;
   cmyk: string;
-}
-
-interface LibraryImageItem {
-  category: string;
-  file: string;
 }
 
 type LibraryLogoOption = 'none' | 'lockup' | 'logotype' | 'symbol' | 'strapline';
@@ -57,34 +58,6 @@ const UI_PALETTE: { name: string; hex: string }[] = [
   { name: 'Divider Stroke', hex: '#999999' },
 ];
 
-const IMAGE_LIBRARY_CATEGORIES = [
-  'Creators',
-  'Crypto:Web3',
-  'Culture',
-  'Economics',
-  'General',
-  'Politics',
-  'Sports',
-  'Tech',
-  'Weather',
-] as const;
-
-const IMAGE_LIBRARY_FILES: Record<(typeof IMAGE_LIBRARY_CATEGORIES)[number], string[]> = {
-  Creators: ['delphi-creator-01.png', 'delphi-creator-02.png'],
-  'Crypto:Web3': [],
-  Culture: [],
-  Economics: [],
-  General: [],
-  Politics: [],
-  Sports: ['delphi-sport-02.png', 'delphi-sports-01.png'],
-  Tech: ['delphi-rocket.png', 'delphi-satellite.png', 'delphi-screens.png', 'delphi-technology.png'],
-  Weather: ['delphi-weather-01.png', 'delphi-weather-03.png'],
-};
-
-const IMAGE_LIBRARY_ITEMS: LibraryImageItem[] = IMAGE_LIBRARY_CATEGORIES.flatMap((category) =>
-  IMAGE_LIBRARY_FILES[category].map((file) => ({ category, file })),
-);
-
 const LIBRARY_LOGO_OPTIONS: Array<{ id: LibraryLogoOption; label: string }> = [
   { id: 'none', label: 'None' },
   { id: 'lockup', label: 'Logo lockup' },
@@ -99,16 +72,6 @@ const WHITE_LOGO_FILES: Record<Exclude<LibraryLogoOption, 'none'>, string> = {
   symbol: 'Delphi-Symbol-Wht.svg',
   strapline: 'Delphi-Strapline-Wht.svg',
 };
-
-function labelFromFilename(fileName: string): string {
-  return fileName
-    .replace(/\.[^.]+$/, '')
-    .replace(/^delphi-?/i, '')
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
 
 function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLDivElement {
   const overlay = document.createElement('div');
@@ -337,9 +300,14 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
     const tabBar = document.createElement('div');
     tabBar.style.cssText = `
       display: flex;
-      gap: 4px;
-      margin-bottom: 16px;
-      border-bottom: 1px solid ${tabBorder};
+      gap: 0;
+      margin-bottom: 20px;
+      padding: 5px;
+      background: rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.06);
+      border: 1px solid ${tabBorder};
+      border-radius: 12px;
+      width: fit-content;
+      max-width: 100%;
     `;
 
     const panel = document.createElement('div');
@@ -349,32 +317,49 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
     `;
 
     const tabStyle = (active: boolean) => `
-      padding: 6px 12px;
+      padding: 12px 22px;
       font-family: 'Fragment Mono', monospace;
-      font-size: 8pt;
+      font-size: 10pt;
+      font-weight: ${active ? '600' : '400'};
       color: var(--fg);
-      opacity: ${active ? 0.85 : 0.45};
-      background: ${active ? 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.04)' : 'none'};
-      border: none;
-      border-bottom: 2px solid ${active ? 'var(--fg)' : 'transparent'};
-      margin-bottom: -1px;
+      opacity: ${active ? 1 : 0.48};
+      background: ${active ? 'var(--bg)' : 'transparent'};
+      border: 1px solid ${active ? tabBorder : 'transparent'};
+      border-radius: 8px;
       cursor: pointer;
-      border-radius: 4px 4px 0 0;
-      transition: opacity 0.2s ease, background 0.2s ease;
+      box-shadow: none;
+      transition: opacity 0.2s ease, background 0.2s ease, border-color 0.2s ease;
     `;
 
-    let activeTab: 'library' | 'generator' = 'library';
+    let activeTab: 'library' | 'generator' = 'generator';
+    // Built panels are cached and toggled (not rebuilt) so image/effect state persists.
+    let generatorEl: HTMLDivElement | null = null;
+    let libraryEl: HTMLDivElement | null = null;
     const tabs = [
-      { id: 'library', label: 'Library' },
-      { id: 'generator', label: 'Generator' },
+      { id: 'generator', label: 'Image Generator' },
+      { id: 'library', label: 'Quick Images' },
     ] as const;
     const tabButtons: HTMLButtonElement[] = [];
 
     const renderImagesTab = (): void => {
-      panel.innerHTML = '';
+      // Toggle cached panels so switching tabs retains selected image and effect settings.
+      if (activeTab === 'generator') {
+        if (libraryEl) libraryEl.style.display = 'none';
+        if (generatorEl) {
+          generatorEl.style.display = '';
+          return;
+        }
+      } else {
+        if (generatorEl) generatorEl.style.display = 'none';
+        if (libraryEl) {
+          libraryEl.style.display = '';
+          return;
+        }
+      }
+
       if (activeTab === 'library') {
         const base = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '');
-        const selectedCategories = new Set<string>();
+        let selectedCategory: string | null = null;
         let selectedLogo: LibraryLogoOption = 'none';
 
         const libraryWrap = document.createElement('div');
@@ -435,7 +420,7 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
         chipRow.appendChild(allChip);
 
         const categoryChips = new Map<string, HTMLButtonElement>();
-        for (const category of IMAGE_LIBRARY_CATEGORIES) {
+        for (const category of IMAGE_LIBRARY_POPULATED_CATEGORIES) {
           const chip = document.createElement('button');
           chip.type = 'button';
           chip.textContent = category;
@@ -503,7 +488,7 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
         `;
 
         const getLibraryUrl = (category: string, file: string): string =>
-          `${base}/images/Images-ready/${encodeURIComponent(category)}/${encodeURIComponent(file)}`;
+          `${base}/${imageLibraryRelativePath(category, file)}`;
 
         const getWhiteLogoUrl = (logo: Exclude<LibraryLogoOption, 'none'>): string =>
           `${base}/images/logos/Delphi-Logos-Wht/${encodeURIComponent(WHITE_LOGO_FILES[logo])}`;
@@ -530,6 +515,54 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
             img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
             img.src = src;
           });
+
+        // The strapline SVG viewBox (760x48) is mostly empty: the ink sits in a small
+        // region near the left. Crop to the ink so sizing/centring act on the visible text.
+        let straplineCroppedUrl: string | null = null;
+        let straplineCroppedUrlPromise: Promise<string> | null = null;
+        const getCroppedStraplineUrl = (): Promise<string> => {
+          if (!straplineCroppedUrlPromise) {
+            straplineCroppedUrlPromise = loadImageElement(getWhiteLogoUrl('strapline'))
+              .then((img) => {
+                const scale = 4;
+                const w = Math.max(1, Math.round(img.naturalWidth * scale));
+                const h = Math.max(1, Math.round(img.naturalHeight * scale));
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return getWhiteLogoUrl('strapline');
+                ctx.drawImage(img, 0, 0, w, h);
+                const alpha = ctx.getImageData(0, 0, w, h).data;
+                let minX = w;
+                let minY = h;
+                let maxX = -1;
+                let maxY = -1;
+                for (let y = 0; y < h; y++) {
+                  for (let x = 0; x < w; x++) {
+                    if (alpha[(y * w + x) * 4 + 3] > 8) {
+                      if (x < minX) minX = x;
+                      if (x > maxX) maxX = x;
+                      if (y < minY) minY = y;
+                      if (y > maxY) maxY = y;
+                    }
+                  }
+                }
+                if (maxX < 0) return getWhiteLogoUrl('strapline');
+                const cw = maxX - minX + 1;
+                const ch = maxY - minY + 1;
+                const out = document.createElement('canvas');
+                out.width = cw;
+                out.height = ch;
+                const outCtx = out.getContext('2d');
+                if (!outCtx) return getWhiteLogoUrl('strapline');
+                outCtx.drawImage(canvas, minX, minY, cw, ch, 0, 0, cw, ch);
+                return out.toDataURL('image/png');
+              })
+              .catch(() => getWhiteLogoUrl('strapline'));
+          }
+          return straplineCroppedUrlPromise;
+        };
 
         const PREVIEW_ASPECT = 4 / 3;
 
@@ -583,27 +616,54 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
           }, 'image/png');
         };
 
+        const computeCenteredLogoSize = (
+          canvasW: number,
+          canvasH: number,
+          logoImg: HTMLImageElement,
+          logoChoice: Exclude<LibraryLogoOption, 'none'>,
+        ): { w: number; h: number } => {
+          const aspect = logoImg.naturalHeight / logoImg.naturalWidth;
+          const baseRatio = logoChoice === 'symbol'
+            ? 0.2
+            : logoChoice === 'logotype'
+              ? 0.48
+              : logoChoice === 'strapline'
+                ? 0.4
+                : 0.44;
+          let w = Math.max(1, Math.round(canvasW * baseRatio));
+          let h = Math.max(1, Math.round(w * aspect));
+          const pad = 0.04;
+          const maxW = canvasW * (1 - pad * 2);
+          const maxH = canvasH * (1 - pad * 2);
+          if (w > maxW || h > maxH) {
+            const scale = Math.min(maxW / w, maxH / h);
+            w = Math.max(1, Math.round(w * scale));
+            h = Math.max(1, Math.round(h * scale));
+          }
+          return { w, h };
+        };
+
         const downloadCompositedWithLogo = async (
           imageUrl: string,
           fileName: string,
           logoChoice: Exclude<LibraryLogoOption, 'none'>,
         ): Promise<void> => {
+          const logoUrl = logoChoice === 'strapline'
+            ? await getCroppedStraplineUrl()
+            : getWhiteLogoUrl(logoChoice);
           const [baseImg, logoImg] = await Promise.all([
             loadImageElement(imageUrl),
-            loadImageElement(getWhiteLogoUrl(logoChoice)),
+            loadImageElement(logoUrl),
           ]);
           const canvas = createPreviewCropCanvas(baseImg);
           const ctx = canvas.getContext('2d');
           if (!ctx) return;
-          const ratio = logoChoice === 'symbol'
-            ? 0.2
-            : logoChoice === 'logotype'
-              ? 0.48
-              : logoChoice === 'strapline'
-                ? 1.08
-                : 0.44;
-          const logoW = Math.max(1, Math.round(canvas.width * ratio));
-          const logoH = Math.max(1, Math.round((logoImg.naturalHeight / logoImg.naturalWidth) * logoW));
+          const { w: logoW, h: logoH } = computeCenteredLogoSize(
+            canvas.width,
+            canvas.height,
+            logoImg,
+            logoChoice,
+          );
           const x = Math.round((canvas.width - logoW) / 2);
           const y = Math.round((canvas.height - logoH) / 2);
           ctx.drawImage(logoImg, x, y, logoW, logoH);
@@ -612,9 +672,9 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
 
         const renderGrid = (): void => {
           grid.innerHTML = '';
-          const items = selectedCategories.size === 0
+          const items = selectedCategory === null
             ? IMAGE_LIBRARY_ITEMS
-            : IMAGE_LIBRARY_ITEMS.filter((item) => selectedCategories.has(item.category));
+            : IMAGE_LIBRARY_ITEMS.filter((item) => item.category === selectedCategory);
 
           for (const item of items) {
             const card = document.createElement('div');
@@ -638,7 +698,7 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
 
             const image = document.createElement('img');
             image.src = getLibraryUrl(item.category, item.file);
-            image.alt = labelFromFilename(item.file);
+            image.alt = labelFromLibraryFilename(item.file);
             image.loading = 'lazy';
             image.style.cssText = `
               width: 100%;
@@ -650,25 +710,42 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
 
             if (selectedLogo !== 'none') {
               const overlayLogo = document.createElement('img');
-              overlayLogo.src = getWhiteLogoUrl(selectedLogo);
+              if (selectedLogo === 'strapline') {
+                void getCroppedStraplineUrl().then((url) => {
+                  overlayLogo.src = url;
+                });
+              } else {
+                overlayLogo.src = getWhiteLogoUrl(selectedLogo);
+              }
               overlayLogo.alt = `${selectedLogo} overlay`;
-              const widthPct = selectedLogo === 'symbol'
-                ? '22%'
-                : selectedLogo === 'logotype'
-                  ? '52%'
-                  : selectedLogo === 'strapline'
-                    ? '111%'
-                    : '46%';
-              overlayLogo.style.cssText = `
+              const overlayStyle = selectedLogo === 'strapline'
+                ? `
                 position: absolute;
                 left: 50%;
                 top: 50%;
                 transform: translate(-50%, -50%);
-                width: ${widthPct};
+                width: 40%;
+                height: auto;
+                pointer-events: none;
+                user-select: none;
+              `
+                : `
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                transform: translate(-50%, -50%);
+                width: ${
+                  selectedLogo === 'symbol'
+                    ? '22%'
+                    : selectedLogo === 'logotype'
+                      ? '52%'
+                      : '46%'
+                };
                 height: auto;
                 pointer-events: none;
                 user-select: none;
               `;
+              overlayLogo.style.cssText = overlayStyle;
               imageWrap.appendChild(overlayLogo);
             }
 
@@ -683,7 +760,7 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
             `;
 
             const caption = document.createElement('div');
-            caption.textContent = labelFromFilename(item.file);
+            caption.textContent = labelFromLibraryFilename(item.file);
             caption.style.cssText = `
               font-family: 'Instrument Serif', serif;
               font-size: 10pt;
@@ -749,10 +826,10 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
         };
 
         const refreshChipStyles = (): void => {
-          const allActive = selectedCategories.size === 0;
+          const allActive = selectedCategory === null;
           allChip.style.cssText = chipStyle(allActive);
           for (const [category, chip] of categoryChips) {
-            chip.style.cssText = chipStyle(selectedCategories.has(category));
+            chip.style.cssText = chipStyle(selectedCategory === category);
           }
           renderGrid();
         };
@@ -764,17 +841,13 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
         };
 
         allChip.addEventListener('click', () => {
-          selectedCategories.clear();
+          selectedCategory = null;
           refreshChipStyles();
         });
 
         for (const [category, chip] of categoryChips) {
           chip.addEventListener('click', () => {
-            if (selectedCategories.has(category)) {
-              selectedCategories.delete(category);
-            } else {
-              selectedCategories.add(category);
-            }
+            selectedCategory = category;
             refreshChipStyles();
           });
         }
@@ -791,6 +864,7 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
         controlsWrap.append(chipsColumn, logoColumn);
         libraryWrap.append(controlsWrap, grid, emptyState);
         panel.appendChild(libraryWrap);
+        libraryEl = libraryWrap;
         refreshChipStyles();
         refreshLogoStyles();
         return;
@@ -817,6 +891,7 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
       `;
       generatorWrap.appendChild(loadingEl);
       panel.appendChild(generatorWrap);
+      generatorEl = generatorWrap;
 
       const baseUrl = window.location.origin + (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '');
       fetchDelphiEffectConfig(baseUrl).then((config) => {
@@ -832,12 +907,15 @@ function createAssetDetailOverlay(container: HTMLElement, starId: string): HTMLD
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.textContent = tab.label;
+      btn.dataset.tabId = tab.id;
+      btn.setAttribute('aria-selected', tab.id === activeTab ? 'true' : 'false');
       btn.style.cssText = tabStyle(tab.id === activeTab);
       btn.addEventListener('click', () => {
         activeTab = tab.id;
         for (const tabBtn of tabButtons) {
-          const isActive = tabBtn.textContent?.toLowerCase() === activeTab;
-          tabBtn.style.cssText = tabStyle(Boolean(isActive));
+          const isActive = tabBtn.dataset.tabId === activeTab;
+          tabBtn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+          tabBtn.style.cssText = tabStyle(isActive);
         }
         renderImagesTab();
       });

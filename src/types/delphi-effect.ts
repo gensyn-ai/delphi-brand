@@ -1,78 +1,69 @@
 /**
- * Config for Delphi-style duotone + vertical-blinds effect.
- * Can be loaded from public/images/Assets/Imagery/delphi-effect.json
- * or from any JSON file you provide.
- *
- * Legacy JSON keys `halftoneCellSize` / `halftoneDotScale` are reused:
- * cell size = vertical stripe width; dot scale = brightness sensitivity.
+ * Config for Delphi halftone dither image effect.
+ * Loaded from public/images/Assets/Imagery/delphi-effect.json or any compatible JSON.
  */
 export interface DelphiEffectConfig {
   name?: string;
   description?: string;
-  /** Width in pixels of each vertical stripe (column). Sliders go up to 96px for large export sizes. */
-  halftoneCellSize?: number;
-  /** How readily mid-tones form visible strokes (0.2–1). Higher = more fill. */
-  halftoneDotScale?: number;
-  /** Horizontal gap in pixels between stripes (shows as background). Capped in renderer to match UI. */
-  stripeGap?: number;
-  /** When true, copy full-resolution source pixels through each stripe (not duotone). */
-  useOriginalColors?: boolean;
-  /** Radius (px) for rounded top/bottom of each stripe segment; 0 = square ends. */
-  stripeEndRadius?: number;
-  /** Stretch luminance before masking (0.7–1.6). Above 1 increases edge separation. */
-  luminanceContrast?: number;
-  /** Drop vertical runs shorter than this (px) to reduce speckle. 0 = off. */
-  minRunLength?: number;
-  /** Boost mask along strong vertical luminance changes (row-to-row). 0 = off. */
-  edgeMaskStrength?: number;
-  /** Source saturation before masking (0.5–1.6). 1 = unchanged. */
-  sourceSaturation?: number;
-  /** Dark inner edge on stripes for depth (0–1). */
-  stripeInnerShadow?: number;
-  /** Duotone shadow color (hex). Background and gaps; dark end of duotone. */
-  colorShadow?: string;
-  /** Duotone highlight color (hex). Maps to light areas. */
-  colorHighlight?: string;
-  /** Screen angle in degrees (0–360). */
-  angle?: number;
+  ditherType?: 'halftone';
+  /** Tone contrast multiplier (preset default 1.13). */
+  contrast?: number;
+  /** Brightness multiplier (preset default 1.5). */
+  brightness?: number;
+  /** Halftone cell size in px (dither.scale × halftone.scale, default 6). */
+  cellSize?: number;
+  /** Soft dot edge falloff 0–10 (preset halftone.smooth: 5). */
+  halftoneSmooth?: number;
+  /** Grain added to dither threshold 0–0.25. */
+  noiseAmount?: number;
+  /** Luminance quantization steps before dither (preset step: 10). */
+  steps?: number;
+  /** Source saturation 0–2 (preset gradient.saturation: 0.6). */
+  saturation?: number;
+  /** Palette id 1–30 (preset gradient.palette: 21). */
+  paletteId?: number;
+  /** How cell colour is chosen: gradient map by luminance, or nearest palette colour. */
+  colorMode?: 'gradient' | 'nearest';
+  /** Reverse the active palette order (DITHR "Reverse Palette"). */
+  reversePalette?: boolean;
+  /** Background / paper color between dots. */
+  paperColor?: string;
 }
 
 export const DEFAULT_DELPHI_CONFIG: Required<Omit<DelphiEffectConfig, 'name' | 'description'>> = {
-  halftoneCellSize: 4,
-  halftoneDotScale: 0.5,
-  stripeGap: 3,
-  useOriginalColors: true,
-  stripeEndRadius: 12,
-  luminanceContrast: 1.1,
-  minRunLength: 0,
-  edgeMaskStrength: 0,
-  sourceSaturation: 1,
-  stripeInnerShadow: 0,
-  colorShadow: '#240908',
-  colorHighlight: '#ffa6a6',
-  angle: 0,
+  ditherType: 'halftone',
+  contrast: 1.13,
+  brightness: 1.5,
+  cellSize: 6,
+  halftoneSmooth: 5,
+  noiseAmount: 0.06,
+  steps: 10,
+  saturation: 0.6,
+  paletteId: 21,
+  colorMode: 'gradient',
+  reversePalette: true,
+  paperColor: '#000000',
 };
 
 export function mergeWithDefaults(partial: DelphiEffectConfig | null): typeof DEFAULT_DELPHI_CONFIG {
-  if (!partial) return DEFAULT_DELPHI_CONFIG;
+  if (!partial) return { ...DEFAULT_DELPHI_CONFIG };
   return {
-    halftoneCellSize: partial.halftoneCellSize ?? DEFAULT_DELPHI_CONFIG.halftoneCellSize,
-    halftoneDotScale: partial.halftoneDotScale ?? DEFAULT_DELPHI_CONFIG.halftoneDotScale,
-    stripeGap: partial.stripeGap ?? DEFAULT_DELPHI_CONFIG.stripeGap,
-    useOriginalColors: partial.useOriginalColors ?? DEFAULT_DELPHI_CONFIG.useOriginalColors,
-    stripeEndRadius: partial.stripeEndRadius ?? DEFAULT_DELPHI_CONFIG.stripeEndRadius,
-    luminanceContrast: partial.luminanceContrast ?? DEFAULT_DELPHI_CONFIG.luminanceContrast,
-    minRunLength: partial.minRunLength ?? DEFAULT_DELPHI_CONFIG.minRunLength,
-    edgeMaskStrength: partial.edgeMaskStrength ?? DEFAULT_DELPHI_CONFIG.edgeMaskStrength,
-    sourceSaturation: partial.sourceSaturation ?? DEFAULT_DELPHI_CONFIG.sourceSaturation,
-    stripeInnerShadow: partial.stripeInnerShadow ?? DEFAULT_DELPHI_CONFIG.stripeInnerShadow,
-    colorShadow: partial.colorShadow ?? DEFAULT_DELPHI_CONFIG.colorShadow,
-    colorHighlight: partial.colorHighlight ?? DEFAULT_DELPHI_CONFIG.colorHighlight,
-    angle: partial.angle ?? DEFAULT_DELPHI_CONFIG.angle,
+    ditherType: partial.ditherType ?? DEFAULT_DELPHI_CONFIG.ditherType,
+    contrast: partial.contrast ?? DEFAULT_DELPHI_CONFIG.contrast,
+    brightness: partial.brightness ?? DEFAULT_DELPHI_CONFIG.brightness,
+    cellSize: partial.cellSize ?? DEFAULT_DELPHI_CONFIG.cellSize,
+    halftoneSmooth: partial.halftoneSmooth ?? DEFAULT_DELPHI_CONFIG.halftoneSmooth,
+    noiseAmount: partial.noiseAmount ?? DEFAULT_DELPHI_CONFIG.noiseAmount,
+    steps: partial.steps ?? DEFAULT_DELPHI_CONFIG.steps,
+    saturation: partial.saturation ?? DEFAULT_DELPHI_CONFIG.saturation,
+    paletteId: partial.paletteId ?? DEFAULT_DELPHI_CONFIG.paletteId,
+    colorMode: partial.colorMode ?? DEFAULT_DELPHI_CONFIG.colorMode,
+    reversePalette: partial.reversePalette ?? DEFAULT_DELPHI_CONFIG.reversePalette,
+    paperColor: partial.paperColor ?? DEFAULT_DELPHI_CONFIG.paperColor,
   };
 }
 
-// --- Graphics layers (drawn on top of duotone image) ---
+// --- Graphics layers (drawn on top of dithered image) ---
 
 export type HeadlineTextAlign = 'left' | 'center' | 'right';
 
@@ -167,7 +158,7 @@ export const DEFAULT_STRAPLINE_LAYER: DelphiLogoLayer = {
   enabled: false,
   x: 0,
   y: 0,
-  width: 240,
+  width: 480,
 };
 
 export const DEFAULT_USER_LOGO_LAYER: UserLogoLayer = {
@@ -196,7 +187,7 @@ export const DEFAULT_CTA_LAYER: CtaLayer = {
   x: 0,
   y: 0,
   fontSize: 14,
-  bgColor: 'rgba(0, 0, 0, 0.55)', // same as market chart box
+  bgColor: 'rgba(0, 0, 0, 0.55)',
   textColor: '#FFFFFF',
   borderRadius: 6,
   paddingH: 24,

@@ -11,6 +11,14 @@ import {
   getDelphiMarketOverlayData,
   type DelphiMarketSearchResult,
 } from '../services/delphi-market';
+import { DELPHI_COLOR_PALETTES } from '../effects/color-palettes';
+import { renderHalftoneDither } from '../effects/halftone-dither';
+import {
+  GENERATOR_LIBRARY_ITEMS,
+  GENERATOR_LIBRARY_POPULATED_CATEGORIES,
+  generatorLibraryRelativePath,
+} from '../data/generator-library';
+import { labelFromLibraryFilename } from '../data/image-library';
 
 const MAX_PREVIEW_PX = 600;
 
@@ -28,93 +36,12 @@ const OUTPUT_SIZE_PRESETS: Array<{ id: string; label: string; w: number; h: numb
   { id: 'pinterest', label: 'Pinterest pin · 1000 × 1500', w: 1000, h: 1500 },
 ];
 
-/** Slider + render caps so stripes stay readable at large output sizes (not tiny vs upload). */
-const MAX_STRIPE_WIDTH_PX = 96;
-const MAX_STRIPE_GAP_PX = 96;
-const MAX_STRIPE_END_RADIUS_PX = 48;
+const MAX_CELL_SIZE_PX = 48;
 
-/**
- * Image library entries for the “view library” modal. Add `{ src, label }` URLs or
- * paths relative to the app base (e.g. `images/your-folder/photo.jpg`).
- * Library PNGs under `public/images/library/` should keep the long edge at ~1920px or
- * less so the generator stays fast; larger masters are resampled before shipping.
- * To keep repo weight down, recompress after edits (e.g. oxipng -o4 --strip safe, then
- * pngquant 256 --quality=78-95 --skip-if-larger on each file).
- */
-const RAW_LIBRARY_FILENAME_RE = /^delphi-library-image-(\d{3})\.png$/i;
-
-function parseRawLibraryIndex(file: string): number | null {
-  const match = file.match(RAW_LIBRARY_FILENAME_RE);
-  if (!match) return null;
-  const parsed = Number.parseInt(match[1], 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function sortRawLibraryFiles(files: string[]): string[] {
-  return [...files].sort((a, b) => {
-    const aIdx = parseRawLibraryIndex(a) ?? Number.POSITIVE_INFINITY;
-    const bIdx = parseRawLibraryIndex(b) ?? Number.POSITIVE_INFINITY;
-    return aIdx - bIdx || a.localeCompare(b);
-  });
-}
-
-function validateRawLibraryFiles(files: string[]): void {
-  const invalid = files.filter((file) => !RAW_LIBRARY_FILENAME_RE.test(file));
-  if (invalid.length > 0) {
-    console.warn('[imagery-generator] Raw library files must use delphi-library-image-XXX.png naming:', invalid);
-  }
-}
-
-const RAW_LIBRARY_FILES = sortRawLibraryFiles([
-  'delphi-library-image-001.png',
-  'delphi-library-image-002.png',
-  'delphi-library-image-003.png',
-  'delphi-library-image-004.png',
-  'delphi-library-image-006.png',
-  'delphi-library-image-007.png',
-  'delphi-library-image-008.png',
-  'delphi-library-image-009.png',
-  'delphi-library-image-010.png',
-  'delphi-library-image-011.png',
-  'delphi-library-image-012.png',
-  'delphi-library-image-013.png',
-  'delphi-library-image-014.png',
-  'delphi-library-image-015.png',
-  'delphi-library-image-016.png',
-  'delphi-library-image-017.png',
-  'delphi-library-image-018.png',
-  'delphi-library-image-019.png',
-  'delphi-library-image-020.png',
-  'delphi-library-image-021.png',
-  'delphi-library-image-022.png',
-  'delphi-library-image-023.png',
-  'delphi-library-image-024.png',
-  'delphi-library-image-025.png',
-  'delphi-library-image-026.png',
-  'delphi-library-image-027.png',
-  'delphi-library-image-028.png',
-  'delphi-library-image-029.png',
-  'delphi-library-image-030.png',
-  'delphi-library-image-031.png',
-  'delphi-library-image-032.png',
-  'delphi-library-image-033.png',
-  'delphi-library-image-034.png',
-  'delphi-library-image-035.png',
-  'delphi-library-image-036.png',
-  'delphi-library-image-037.png',
-  'delphi-library-image-038.png',
-  'delphi-library-image-039.png',
-  'delphi-library-image-040.png',
-  'delphi-library-image-041.png',
-  'delphi-library-image-042.png',
-  'delphi-library-image-043.png',
-]);
-
-validateRawLibraryFiles(RAW_LIBRARY_FILES);
-
-const IMAGERY_LIBRARY_ITEMS: Array<{ src: string; label: string }> = RAW_LIBRARY_FILES.map((file) => ({
-  src: `images/library/${file}`,
-  label: `Delphi library ${file.match(RAW_LIBRARY_FILENAME_RE)?.[1] ?? file}`,
+const GENERATOR_LIBRARY_GRID_ITEMS = GENERATOR_LIBRARY_ITEMS.map((item) => ({
+  category: item.category,
+  src: generatorLibraryRelativePath(item.category, item.file),
+  label: `${item.category} · ${labelFromLibraryFilename(item.file)}`,
 }));
 
 function resolvePublicAssetUrl(path: string): string {
@@ -283,24 +210,6 @@ function scaleCanvasCover(src: HTMLCanvasElement, targetW: number, targetH: numb
   return out;
 }
 
-function clampByte(v: number): number {
-  return Math.max(0, Math.min(255, Math.round(v)));
-}
-
-/** Luma-preserving saturation; factor 1 = unchanged, 0 = grayscale. */
-function applySaturationToBuffer(data: Uint8ClampedArray, factor: number): void {
-  if (Math.abs(factor - 1) < 0.001) return;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const y = 0.299 * r + 0.587 * g + 0.114 * b;
-    data[i] = clampByte(y + (r - y) * factor);
-    data[i + 1] = clampByte(y + (g - y) * factor);
-    data[i + 2] = clampByte(y + (b - y) * factor);
-  }
-}
-
 const BORDER = '1px solid rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.12)';
 const LABEL_STYLE = `
   font-family: 'Fragment Mono', monospace;
@@ -311,197 +220,6 @@ const LABEL_STYLE = `
   letter-spacing: 0.06em;
   margin-bottom: 6px;
 `;
-
-function parseHex(hex: string): [number, number, number] {
-  const m = hex.replace(/^#/, '').match(/^([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-  if (!m) return [0, 0, 0];
-  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
-}
-
-function lerpColor(
-  hex1: string,
-  hex2: string,
-  t: number
-): string {
-  const [r1, g1, b1] = parseHex(hex1);
-  const [r2, g2, b2] = parseHex(hex2);
-  const r = Math.round(r1 + (r2 - r1) * t);
-  const g = Math.round(g1 + (g2 - g1) * t);
-  const b = Math.round(b1 + (b2 - b1) * t);
-  return `rgb(${r},${g},${b})`;
-}
-
-function clamp01(v: number): number {
-  return Math.max(0, Math.min(1, v));
-}
-
-interface RowSample {
-  L: number;
-  sw: number;
-}
-
-function rowSampleFromData(
-  data: Uint8ClampedArray,
-  imgW: number,
-  x0: number,
-  x1: number,
-  y: number
-): RowSample | null {
-  const sw = x1 - x0;
-  if (sw <= 0) return null;
-  let sumL = 0;
-  for (let x = x0; x < x1; x++) {
-    const i = (y * imgW + x) * 4;
-    sumL += (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) / 255;
-  }
-  return { L: sumL / sw, sw };
-}
-
-/**
- * Vertical blinds: optional saturation on work canvas, edge-aware mask, duotone or full photo, inner shadow.
- */
-function renderVerticalBlindsDuotone(
-  sourceCanvas: HTMLCanvasElement,
-  destCtx: CanvasRenderingContext2D,
-  config: typeof DEFAULT_DELPHI_CONFIG
-): void {
-  const w = sourceCanvas.width;
-  const h = sourceCanvas.height;
-  const sat = Math.max(0.5, Math.min(1.6, config.sourceSaturation));
-
-  let workCanvas = sourceCanvas;
-  if (Math.abs(sat - 1) > 0.001) {
-    const wc = document.createElement('canvas');
-    wc.width = w;
-    wc.height = h;
-    const wctx = wc.getContext('2d')!;
-    wctx.drawImage(sourceCanvas, 0, 0);
-    const sid = wctx.getImageData(0, 0, w, h);
-    applySaturationToBuffer(sid.data, sat);
-    wctx.putImageData(sid, 0, 0);
-    workCanvas = wc;
-  }
-
-  const wctx = workCanvas.getContext('2d');
-  if (!wctx) return;
-
-  const imageData = wctx.getImageData(0, 0, w, h);
-  const data = imageData.data;
-  const stripeW = Math.max(1, Math.round(config.halftoneCellSize));
-  const gap = Math.max(0, Math.min(MAX_STRIPE_GAP_PX, Math.round(config.stripeGap)));
-  const pitch = stripeW + gap;
-  const sensitivity = Math.max(0.15, Math.min(1, config.halftoneDotScale));
-  const lumThreshold = Math.max(0.02, (1 - sensitivity) * 0.5);
-  const fullColor = config.useOriginalColors;
-  const endRadiusMax = Math.max(0, Math.min(MAX_STRIPE_END_RADIUS_PX, Math.round(config.stripeEndRadius)));
-  const lumContrast = Math.max(0.65, Math.min(1.65, config.luminanceContrast));
-  const minRun = Math.max(0, Math.min(12, Math.round(config.minRunLength)));
-  const edgeStr = Math.max(0, Math.min(1.2, config.edgeMaskStrength));
-  const innerSh = Math.max(0, Math.min(1, config.stripeInnerShadow));
-
-  destCtx.fillStyle = config.colorShadow;
-  destCtx.fillRect(0, 0, w, h);
-
-  const strokePath = (x: number, y: number, sw: number, rh: number, rCap: number): void => {
-    destCtx.beginPath();
-    if (rCap > 0.25) {
-      destCtx.roundRect(x, y, sw, rh, rCap);
-    } else {
-      destCtx.rect(x, y, sw, rh);
-    }
-  };
-
-  const paintInnerShadow = (x: number, y0: number, sw: number, rh: number, rCap: number): void => {
-    if (innerSh <= 0.02) return;
-    destCtx.save();
-    strokePath(x, y0, sw, rh, rCap);
-    destCtx.clip();
-    const inward = Math.min(sw * 0.55, 14);
-    const alpha = innerSh * 0.48;
-    const gL = destCtx.createLinearGradient(x, 0, x + inward, 0);
-    gL.addColorStop(0, `rgba(0,0,0,${alpha})`);
-    gL.addColorStop(1, 'rgba(0,0,0,0)');
-    destCtx.fillStyle = gL;
-    destCtx.fillRect(x, y0, inward, rh);
-    const gR = destCtx.createLinearGradient(x + sw, 0, x + sw - inward, 0);
-    gR.addColorStop(0, `rgba(0,0,0,${alpha})`);
-    gR.addColorStop(1, 'rgba(0,0,0,0)');
-    destCtx.fillStyle = gR;
-    destCtx.fillRect(x + sw - inward, y0, inward, rh);
-    destCtx.restore();
-  };
-
-  for (let x0 = 0; x0 < w; x0 += pitch) {
-    const x1 = Math.min(x0 + stripeW, w);
-    const sw = x1 - x0;
-    if (sw <= 0) continue;
-
-    const colL = new Float32Array(h);
-    for (let y = 0; y < h; y++) {
-      const sample = rowSampleFromData(data, w, x0, x1, y);
-      colL[y] = sample ? sample.L : 0;
-    }
-
-    let runStart = -1;
-    let runLumWeighted = 0;
-    let runPx = 0;
-
-    const endRun = (yEnd: number): void => {
-      if (runStart < 0 || runPx <= 0) return;
-      const rh = yEnd - runStart;
-      if (minRun > 0 && rh < minRun) {
-        runStart = -1;
-        runLumWeighted = 0;
-        runPx = 0;
-        return;
-      }
-      const rCap =
-        endRadiusMax > 0
-          ? Math.min(endRadiusMax, sw / 2, rh / 2)
-          : 0;
-
-      if (fullColor) {
-        destCtx.save();
-        strokePath(x0, runStart, sw, rh, rCap);
-        destCtx.clip();
-        destCtx.drawImage(workCanvas, x0, runStart, sw, rh, x0, runStart, sw, rh);
-        destCtx.restore();
-      } else {
-        strokePath(x0, runStart, sw, rh, rCap);
-        const avgLum = runLumWeighted / runPx;
-        destCtx.fillStyle = lerpColor(config.colorShadow, config.colorHighlight, avgLum);
-        destCtx.fill();
-      }
-
-      paintInnerShadow(x0, runStart, sw, rh, rCap);
-
-      runStart = -1;
-      runLumWeighted = 0;
-      runPx = 0;
-    };
-
-    for (let y = 0; y < h; y++) {
-      let grad = 0;
-      if (y > 0) grad += Math.abs(colL[y] - colL[y - 1]);
-      if (y < h - 1) grad += Math.abs(colL[y] - colL[y + 1]);
-      grad *= 0.5;
-      const Lraw = colL[y];
-      const Lmid = clamp01((Lraw - 0.5) * lumContrast + 0.5);
-      const L = clamp01(Lmid + edgeStr * Math.min(1, grad * 1.25));
-
-      const sample = rowSampleFromData(data, w, x0, x1, y);
-      if (!sample) continue;
-      if (L > lumThreshold) {
-        if (runStart < 0) runStart = y;
-        runLumWeighted += sample.L * sample.sw;
-        runPx += sample.sw;
-      } else {
-        endRun(y);
-      }
-    }
-    endRun(h);
-  }
-}
 
 const INSTRUMENT_SERIF = '"Instrument Serif", serif';
 const FRAGMENT_MONO = '"Fragment Mono", monospace';
@@ -1572,7 +1290,7 @@ async function loadImageFromUrl(
 }
 
 /**
- * Create the Delphi duotone (vertical blinds) generator UI and append to container.
+ * Create the Delphi halftone dither generator UI and append to container.
  * Optionally pass initial config (e.g. from JSON); otherwise uses defaults.
  */
 const DELPHI_LOGO_PATH = `${(import.meta.env.BASE_URL ?? '/').replace(/\/$/, '')}/images/logos/Delphi-Logos-Wht/Delphi-logo-set_delphi-logotype-wht.svg`;
@@ -1584,16 +1302,8 @@ export function createDelphiImageryPanel(
   initialConfig: DelphiEffectConfig | null = null
 ): void {
   const config = { ...mergeWithDefaults(initialConfig) };
-  config.useOriginalColors = true;
-  config.halftoneCellSize = Math.min(
-    MAX_STRIPE_WIDTH_PX,
-    Math.max(1, Math.round(config.halftoneCellSize))
-  );
-  config.stripeGap = Math.min(MAX_STRIPE_GAP_PX, Math.max(0, Math.round(config.stripeGap)));
-  config.stripeEndRadius = Math.min(
-    MAX_STRIPE_END_RADIUS_PX,
-    Math.max(0, Math.round(config.stripeEndRadius))
-  );
+  config.cellSize = Math.min(MAX_CELL_SIZE_PX, Math.max(2, Math.round(config.cellSize)));
+  config.paletteId = Math.min(30, Math.max(1, Math.round(config.paletteId)));
   const graphicsLayers = createDefaultGraphicsLayers();
   let delphiLogoImage: HTMLImageElement | null = null;
   const delphiLogoImg = new Image();
@@ -1769,7 +1479,7 @@ export function createDelphiImageryPanel(
 
   const controlsTabNav = document.createElement('div');
   controlsTabNav.setAttribute('role', 'tablist');
-  controlsTabNav.setAttribute('aria-label', 'Image generator controls sections');
+  controlsTabNav.setAttribute('aria-label', 'Image Generator controls sections');
   controlsTabNav.style.cssText = `
     display: flex;
     align-items: center;
@@ -1930,7 +1640,7 @@ export function createDelphiImageryPanel(
       e.preventDefault();
       libraryUI.open();
     });
-    const t2 = document.createTextNode(' to view library.');
+    const t2 = document.createTextNode(' to browse the library.');
     p.append(t1, libBtn, t2);
     placeholderInner.appendChild(p);
   };
@@ -2008,7 +1718,7 @@ export function createDelphiImageryPanel(
 
   const viewLibraryBtn = document.createElement('button');
   viewLibraryBtn.type = 'button';
-  viewLibraryBtn.textContent = 'View library';
+  viewLibraryBtn.textContent = 'Library';
   viewLibraryBtn.setAttribute('aria-haspopup', 'dialog');
   viewLibraryBtn.style.cssText = replaceLink.style.cssText;
   previewControlsRow.appendChild(viewLibraryBtn);
@@ -2020,7 +1730,7 @@ export function createDelphiImageryPanel(
   exportLink.addEventListener('click', () => {
     if (!exportCanvas) return;
     const link = document.createElement('a');
-    link.download = 'delphi-duotone.png';
+    link.download = 'delphi-imagery.png';
     link.href = exportCanvas.toDataURL('image/png');
     link.click();
   });
@@ -2028,9 +1738,12 @@ export function createDelphiImageryPanel(
   canvasColumn.appendChild(previewControlsRow);
 
   previewWrap.addEventListener('click', () => {
-    if (!sourceCanvas) {
-      input.click();
+    // Dragging/resizing/deselecting a graphic layer suppresses this open.
+    if (canvasClickSuppressed) {
+      canvasClickSuppressed = false;
+      return;
     }
+    libraryUI.open();
   });
 
   replaceLink.addEventListener('click', () => {
@@ -2089,6 +1802,8 @@ export function createDelphiImageryPanel(
   /** Unscaled upload; used to re-apply output size presets. */
   let masterCanvas: HTMLCanvasElement | null = null;
   let exportCanvas: HTMLCanvasElement | null = null;
+  /** Set on a graphic layer interaction so the following canvas click doesn't open the library. */
+  let canvasClickSuppressed = false;
 
   function syncPreviewCanvasDisplaySize(): void {
     if (!sourceCanvas) return;
@@ -2193,7 +1908,7 @@ export function createDelphiImageryPanel(
     previewCanvas.height = h;
     const ctx = previewCanvas.getContext('2d');
     if (!ctx) return;
-    renderVerticalBlindsDuotone(sourceCanvas, ctx, config);
+    renderHalftoneDither(sourceCanvas, ctx, config);
     // Apply default positions for enabled layers still at (0,0)
     if (graphicsLayers.headline.enabled && graphicsLayers.headline.x === 0 && graphicsLayers.headline.y === 0) {
       applyDefaultPosition('headline', w, h, graphicsLayers, { delphiLogo: delphiLogoImage, delphiSymbol: delphiSymbolImage, strapline: straplineImage, straplineTrim: straplineSourceTrim }, ctx);
@@ -2266,7 +1981,7 @@ export function createDelphiImageryPanel(
     exportCanvas.width = w;
     exportCanvas.height = h;
     const exportCtx = exportCanvas.getContext('2d')!;
-    renderVerticalBlindsDuotone(sourceCanvas, exportCtx, config);
+    renderHalftoneDither(sourceCanvas, exportCtx, config);
     drawGraphicsLayers(exportCtx, w, h, graphicsLayers, brandBundle);
   }
 
@@ -2321,7 +2036,7 @@ export function createDelphiImageryPanel(
   `;
   libraryModalRoot.setAttribute('role', 'dialog');
   libraryModalRoot.setAttribute('aria-modal', 'true');
-  libraryModalRoot.setAttribute('aria-label', 'Image library');
+  libraryModalRoot.setAttribute('aria-label', 'Library');
 
   const libraryModalBackdrop = document.createElement('div');
   libraryModalBackdrop.style.cssText = `
@@ -2335,9 +2050,9 @@ export function createDelphiImageryPanel(
   libraryModalPanel.style.cssText = `
     position: relative;
     z-index: 1;
-    max-width: 640px;
+    max-width: min(92vw, 880px);
     width: 100%;
-    max-height: min(80vh, 560px);
+    max-height: min(85vh, 640px);
     display: flex;
     flex-direction: column;
     background-color: var(--bg);
@@ -2359,7 +2074,7 @@ export function createDelphiImageryPanel(
     background-color: var(--bg);
   `;
   const libraryModalTitle = document.createElement('h2');
-  libraryModalTitle.textContent = 'Image library';
+  libraryModalTitle.textContent = 'Library';
   libraryModalTitle.style.cssText = `
     font-family: 'Instrument Serif', serif;
     font-size: 14pt;
@@ -2371,7 +2086,7 @@ export function createDelphiImageryPanel(
   const libraryModalClose = document.createElement('button');
   libraryModalClose.type = 'button';
   libraryModalClose.textContent = 'Close';
-  libraryModalClose.setAttribute('aria-label', 'Close image library');
+  libraryModalClose.setAttribute('aria-label', 'Close library browser');
   libraryModalClose.style.cssText = `
     font-family: 'Fragment Mono', monospace;
     font-size: 8pt;
@@ -2383,6 +2098,29 @@ export function createDelphiImageryPanel(
     padding: 6px 12px;
     cursor: pointer;
   `;
+
+  const libraryFilterRow = document.createElement('div');
+  libraryFilterRow.style.cssText = `
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 18px 0;
+    flex-shrink: 0;
+    background-color: var(--bg);
+  `;
+  const libraryFilterLabel = document.createElement('p');
+  libraryFilterLabel.textContent = 'Filter';
+  libraryFilterLabel.style.cssText = `
+    width: 100%;
+    margin: 0 0 2px 0;
+    font-family: 'Fragment Mono', monospace;
+    font-size: 7.5pt;
+    color: var(--fg);
+    opacity: 0.5;
+  `;
+  const libraryChipRow = document.createElement('div');
+  libraryChipRow.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; width: 100%;';
+  libraryFilterRow.append(libraryFilterLabel, libraryChipRow);
 
   const libraryModalScroll = document.createElement('div');
   libraryModalScroll.style.cssText = `
@@ -2407,12 +2145,38 @@ export function createDelphiImageryPanel(
     margin: 0;
     line-height: 1.5;
   `;
-  libraryEmpty.textContent =
-    'No library images yet. Add entries to IMAGERY_LIBRARY_ITEMS in imagery-delphi.ts (paths under public/ or full URLs), then rebuild.';
+  libraryEmpty.textContent = 'No images match this filter.';
+
+  const selectedLibraryCategory: { value: string | null } = { value: null };
+  const libraryCategoryChips = new Map<string, HTMLButtonElement>();
+
+  const libraryChipStyle = (active: boolean): string => `
+    border: 1px solid rgba(var(--fg-r), var(--fg-g), var(--fg-b), ${active ? '0.3' : '0.15'});
+    background: ${active ? 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.08)' : 'rgba(var(--fg-r), var(--fg-g), var(--fg-b), 0.02)'};
+    color: var(--fg);
+    opacity: ${active ? '0.9' : '0.65'};
+    border-radius: 999px;
+    padding: 5px 11px;
+    font-family: 'Fragment Mono', monospace;
+    font-size: 7.5pt;
+    cursor: pointer;
+  `;
+
+  const libraryAllChip = document.createElement('button');
+  libraryAllChip.type = 'button';
+  libraryAllChip.textContent = 'All';
+  libraryChipRow.appendChild(libraryAllChip);
+  for (const category of GENERATOR_LIBRARY_POPULATED_CATEGORIES) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = category;
+    libraryCategoryChips.set(category, chip);
+    libraryChipRow.appendChild(chip);
+  }
 
   libraryModalHeader.append(libraryModalTitle, libraryModalClose);
   libraryModalScroll.append(libraryGrid, libraryEmpty);
-  libraryModalPanel.append(libraryModalHeader, libraryModalScroll);
+  libraryModalPanel.append(libraryModalHeader, libraryFilterRow, libraryModalScroll);
   libraryModalRoot.append(libraryModalBackdrop, libraryModalPanel);
   document.body.appendChild(libraryModalRoot);
 
@@ -2426,14 +2190,37 @@ export function createDelphiImageryPanel(
     }
   }
 
+  function refreshLibraryFilterChips(): void {
+    const allActive = selectedLibraryCategory.value === null;
+    libraryAllChip.style.cssText = libraryChipStyle(allActive);
+    for (const [category, chip] of libraryCategoryChips) {
+      chip.style.cssText = libraryChipStyle(selectedLibraryCategory.value === category);
+    }
+    rebuildImageryLibraryGrid();
+  }
+
+  libraryAllChip.addEventListener('click', () => {
+    selectedLibraryCategory.value = null;
+    refreshLibraryFilterChips();
+  });
+  for (const [category, chip] of libraryCategoryChips) {
+    chip.addEventListener('click', () => {
+      selectedLibraryCategory.value = category;
+      refreshLibraryFilterChips();
+    });
+  }
+
   function rebuildImageryLibraryGrid(): void {
     libraryGrid.replaceChildren();
-    if (IMAGERY_LIBRARY_ITEMS.length === 0) {
+    const items = selectedLibraryCategory.value === null
+      ? GENERATOR_LIBRARY_GRID_ITEMS
+      : GENERATOR_LIBRARY_GRID_ITEMS.filter((item) => item.category === selectedLibraryCategory.value);
+    if (items.length === 0) {
       libraryEmpty.style.display = 'block';
       return;
     }
     libraryEmpty.style.display = 'none';
-    for (const item of IMAGERY_LIBRARY_ITEMS) {
+    for (const item of items) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.style.cssText = `
@@ -2500,7 +2287,8 @@ export function createDelphiImageryPanel(
   libraryModalBackdrop.addEventListener('click', () => closeImageryLibraryModal());
 
   libraryUI.open = () => {
-    rebuildImageryLibraryGrid();
+    selectedLibraryCategory.value = null;
+    refreshLibraryFilterChips();
     libraryModalRoot.style.display = 'flex';
     libraryModalKeyHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeImageryLibraryModal();
@@ -2649,6 +2437,7 @@ export function createDelphiImageryPanel(
 
   previewCanvas.addEventListener('mousedown', (e) => {
     if (!sourceCanvas) return;
+    canvasClickSuppressed = false;
     const { x, y } = getCanvasCoords(e);
     const ctx = previewCanvas.getContext('2d');
 
@@ -2660,6 +2449,7 @@ export function createDelphiImageryPanel(
         const corner = hitTestHandle(x, y, selRect);
         if (corner) {
           e.preventDefault();
+          canvasClickSuppressed = true;
           isResizing = true;
           resizeCorner = corner;
           resizeStartRect = { ...selRect };
@@ -2674,6 +2464,7 @@ export function createDelphiImageryPanel(
     const layer = hitTestLayer(x, y);
     if (layer) {
       e.preventDefault();
+      canvasClickSuppressed = true;
       selectedLayer = layer;
       draggingLayer = layer;
       clearCenterSnapGuides();
@@ -2684,6 +2475,7 @@ export function createDelphiImageryPanel(
       drawPreview();
     } else {
       if (selectedLayer) {
+        canvasClickSuppressed = true;
         selectedLayer = null;
         drawPreview();
       }
@@ -2910,264 +2702,236 @@ export function createDelphiImageryPanel(
     align-items: start;
   `;
 
-  // Vertical stripe width
-  const densityWrap = document.createElement('div');
-  densityWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const densityLabel = document.createElement('label');
-  densityLabel.textContent = 'Stripe width';
-  densityLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const densityInput = document.createElement('input');
-  densityInput.type = 'range';
-  densityInput.min = '1';
-  densityInput.max = String(MAX_STRIPE_WIDTH_PX);
-  densityInput.step = '1';
-  densityInput.value = String(config.halftoneCellSize);
-  densityInput.style.cssText = 'width: 100%;';
-  const densityValue = document.createElement('span');
-  densityValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  densityValue.textContent = `${config.halftoneCellSize}px`;
-  densityWrap.appendChild(densityLabel);
-  densityWrap.appendChild(densityInput);
-  densityWrap.appendChild(densityValue);
-  densityInput.addEventListener('input', () => {
-    config.halftoneCellSize = Number(densityInput.value);
-    densityValue.textContent = `${config.halftoneCellSize}px`;
-    drawPreview();
-  });
-  controlsGrid.appendChild(densityWrap);
+  function addRangeControl(
+    label: string,
+    min: number,
+    max: number,
+    step: number,
+    value: number,
+    format: (v: number) => string,
+    onChange: (v: number) => void
+  ): { wrap: HTMLDivElement; sync: (v: number) => void } {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+    const lbl = document.createElement('label');
+    lbl.textContent = label;
+    lbl.style.cssText = LABEL_STYLE + ' display: block;';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.value = String(value);
+    input.style.cssText = 'width: 100%;';
+    const val = document.createElement('span');
+    val.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
+    val.textContent = format(value);
+    wrap.append(lbl, input, val);
+    input.addEventListener('input', () => {
+      const n = Number(input.value);
+      val.textContent = format(n);
+      onChange(n);
+      drawPreview();
+    });
+    return {
+      wrap,
+      sync: (v: number) => {
+        input.value = String(v);
+        val.textContent = format(v);
+      },
+    };
+  }
 
-  // Brightness sensitivity (how much of the image forms strokes)
-  const scaleWrap = document.createElement('div');
-  scaleWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const scaleLabel = document.createElement('label');
-  scaleLabel.textContent = 'Brightness fill';
-  scaleLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const scaleInput = document.createElement('input');
-  scaleInput.type = 'range';
-  scaleInput.min = '0.15';
-  scaleInput.max = '1';
-  scaleInput.step = '0.05';
-  scaleInput.value = String(config.halftoneDotScale);
-  scaleInput.style.cssText = 'width: 100%;';
-  const scaleValue = document.createElement('span');
-  scaleValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  scaleValue.textContent = `${Math.round(config.halftoneDotScale * 100)}%`;
-  scaleWrap.appendChild(scaleLabel);
-  scaleWrap.appendChild(scaleInput);
-  scaleWrap.appendChild(scaleValue);
-  scaleInput.addEventListener('input', () => {
-    config.halftoneDotScale = Number(scaleInput.value);
-    scaleValue.textContent = `${Math.round(config.halftoneDotScale * 100)}%`;
+  // Palette picker
+  const paletteWrap = document.createElement('div');
+  paletteWrap.style.cssText = 'display: flex; flex-direction: column; gap: 6px; grid-column: 1 / -1;';
+  const paletteLabel = document.createElement('label');
+  paletteLabel.textContent = 'Colour palette';
+  paletteLabel.style.cssText = LABEL_STYLE + ' display: block;';
+  const paletteRow = document.createElement('div');
+  paletteRow.style.cssText = 'display: flex; align-items: center; gap: 10px; flex-wrap: wrap;';
+  const paletteSelect = document.createElement('select');
+  paletteSelect.style.cssText = `
+    font-family: 'Fragment Mono', monospace;
+    font-size: 8pt;
+    padding: 6px 8px;
+    border: ${BORDER};
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+    min-width: 72px;
+  `;
+  for (const p of DELPHI_COLOR_PALETTES) {
+    const opt = document.createElement('option');
+    opt.value = String(p.id);
+    opt.textContent = String(p.id);
+    if (p.id === config.paletteId) opt.selected = true;
+    paletteSelect.appendChild(opt);
+  }
+  const paletteSwatches = document.createElement('div');
+  paletteSwatches.style.cssText = 'display: flex; gap: 4px; align-items: center;';
+  const refreshPaletteSwatches = (): void => {
+    paletteSwatches.replaceChildren();
+    const entry = DELPHI_COLOR_PALETTES.find((p) => p.id === config.paletteId);
+    if (!entry) return;
+    const hexes: string[] = [];
+    for (let i = 0; i < entry.colors.length; i++) {
+      if (entry.use[i]) hexes.push(entry.colors[i]);
+    }
+    if (config.reversePalette) hexes.reverse();
+    for (const hex of hexes) {
+      const sw = document.createElement('span');
+      sw.style.cssText = `width: 18px; height: 18px; border-radius: 3px; background: ${hex}; border: 1px solid rgba(0,0,0,0.12);`;
+      paletteSwatches.appendChild(sw);
+    }
+  };
+  refreshPaletteSwatches();
+  paletteSelect.addEventListener('change', () => {
+    config.paletteId = Number(paletteSelect.value);
+    refreshPaletteSwatches();
     drawPreview();
   });
-  controlsGrid.appendChild(scaleWrap);
 
-  // Gap between stripes (fixed-width; shows background color)
-  const gapWrap = document.createElement('div');
-  gapWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const gapLabel = document.createElement('label');
-  gapLabel.textContent = 'Stripe gap';
-  gapLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const gapInput = document.createElement('input');
-  gapInput.type = 'range';
-  gapInput.min = '0';
-  gapInput.max = String(MAX_STRIPE_GAP_PX);
-  gapInput.step = '1';
-  gapInput.value = String(config.stripeGap);
-  gapInput.style.cssText = 'width: 100%;';
-  const gapValue = document.createElement('span');
-  gapValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  gapValue.textContent = `${config.stripeGap}px`;
-  gapWrap.appendChild(gapLabel);
-  gapWrap.appendChild(gapInput);
-  gapWrap.appendChild(gapValue);
-  gapInput.addEventListener('input', () => {
-    config.stripeGap = Number(gapInput.value);
-    gapValue.textContent = `${config.stripeGap}px`;
+  const reverseWrap = document.createElement('div');
+  reverseWrap.style.cssText = 'display: flex; align-items: center; gap: 6px;';
+  const reverseCheck = document.createElement('input');
+  reverseCheck.type = 'checkbox';
+  reverseCheck.checked = config.reversePalette;
+  reverseCheck.id = 'delphi-reverse-palette-check';
+  reverseCheck.style.cssText = 'cursor: pointer;';
+  const reverseLabel = document.createElement('label');
+  reverseLabel.htmlFor = 'delphi-reverse-palette-check';
+  reverseLabel.textContent = 'Reverse palette';
+  reverseLabel.style.cssText = LABEL_STYLE + ' cursor: pointer;';
+  reverseCheck.addEventListener('change', () => {
+    config.reversePalette = reverseCheck.checked;
+    refreshPaletteSwatches();
     drawPreview();
   });
-  controlsGrid.appendChild(gapWrap);
+  reverseWrap.append(reverseCheck, reverseLabel);
 
-  // Rounded ends (pill-shaped stripe segments)
-  const capWrap = document.createElement('div');
-  capWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const capLabel = document.createElement('label');
-  capLabel.textContent = 'Round ends';
-  capLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const capInput = document.createElement('input');
-  capInput.type = 'range';
-  capInput.min = '0';
-  capInput.max = String(MAX_STRIPE_END_RADIUS_PX);
-  capInput.step = '1';
-  capInput.value = String(config.stripeEndRadius);
-  capInput.style.cssText = 'width: 100%;';
-  const capValue = document.createElement('span');
-  capValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  capValue.textContent = config.stripeEndRadius === 0 ? 'Off' : `${config.stripeEndRadius}px`;
-  capWrap.appendChild(capLabel);
-  capWrap.appendChild(capInput);
-  capWrap.appendChild(capValue);
-  capInput.addEventListener('input', () => {
-    config.stripeEndRadius = Number(capInput.value);
-    capValue.textContent = config.stripeEndRadius === 0 ? 'Off' : `${config.stripeEndRadius}px`;
-    drawPreview();
-  });
-  controlsGrid.appendChild(capWrap);
+  paletteRow.append(paletteSelect, paletteSwatches, reverseWrap);
+  paletteWrap.append(paletteLabel, paletteRow);
+  controlsGrid.appendChild(paletteWrap);
 
-  // Luminance contrast (mask clarity)
-  const lumWrap = document.createElement('div');
-  lumWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const lumLabel = document.createElement('label');
-  lumLabel.textContent = 'Tone contrast';
-  lumLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const lumInput = document.createElement('input');
-  lumInput.type = 'range';
-  lumInput.min = '0.65';
-  lumInput.max = '1.65';
-  lumInput.step = '0.05';
-  lumInput.value = String(config.luminanceContrast);
-  lumInput.style.cssText = 'width: 100%;';
-  const lumValue = document.createElement('span');
-  lumValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  lumValue.textContent = `${Number(lumInput.value).toFixed(2)}×`;
-  lumWrap.appendChild(lumLabel);
-  lumWrap.appendChild(lumInput);
-  lumWrap.appendChild(lumValue);
-  lumInput.addEventListener('input', () => {
-    config.luminanceContrast = Number(lumInput.value);
-    lumValue.textContent = `${config.luminanceContrast.toFixed(2)}×`;
+  const colorModeWrap = document.createElement('div');
+  colorModeWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+  const colorModeLabel = document.createElement('label');
+  colorModeLabel.textContent = 'Colour mode';
+  colorModeLabel.style.cssText = LABEL_STYLE + ' display: block;';
+  const colorModeSelect = document.createElement('select');
+  colorModeSelect.style.cssText = paletteSelect.style.cssText;
+  for (const [value, label] of [['gradient', 'Gradient map'], ['nearest', 'Nearest colour']] as const) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    if (config.colorMode === value) opt.selected = true;
+    colorModeSelect.appendChild(opt);
+  }
+  colorModeSelect.addEventListener('change', () => {
+    config.colorMode = colorModeSelect.value as typeof config.colorMode;
     drawPreview();
   });
-  controlsGrid.appendChild(lumWrap);
+  colorModeWrap.append(colorModeLabel, colorModeSelect);
+  controlsGrid.appendChild(colorModeWrap);
 
-  // Minimum stroke height (noise reduction)
-  const minRunWrap = document.createElement('div');
-  minRunWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const minRunLabel = document.createElement('label');
-  minRunLabel.textContent = 'Min stroke height';
-  minRunLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const minRunInput = document.createElement('input');
-  minRunInput.type = 'range';
-  minRunInput.min = '0';
-  minRunInput.max = '12';
-  minRunInput.step = '1';
-  minRunInput.value = String(config.minRunLength);
-  minRunInput.style.cssText = 'width: 100%;';
-  const minRunValue = document.createElement('span');
-  minRunValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  minRunValue.textContent = config.minRunLength === 0 ? 'Off' : `${config.minRunLength}px`;
-  minRunWrap.appendChild(minRunLabel);
-  minRunWrap.appendChild(minRunInput);
-  minRunWrap.appendChild(minRunValue);
-  minRunInput.addEventListener('input', () => {
-    config.minRunLength = Number(minRunInput.value);
-    minRunValue.textContent = config.minRunLength === 0 ? 'Off' : `${config.minRunLength}px`;
-    drawPreview();
-  });
-  controlsGrid.appendChild(minRunWrap);
+  const satCtrl = addRangeControl(
+    'Saturation',
+    0,
+    2,
+    0.05,
+    config.saturation,
+    (v) => `${v.toFixed(2)}×`,
+    (v) => { config.saturation = v; }
+  );
+  controlsGrid.appendChild(satCtrl.wrap);
 
-  // Edge-aware mask (vertical luminance change)
-  const edgeWrap = document.createElement('div');
-  edgeWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const edgeLabel = document.createElement('label');
-  edgeLabel.textContent = 'Edge boost';
-  edgeLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const edgeInput = document.createElement('input');
-  edgeInput.type = 'range';
-  edgeInput.min = '0';
-  edgeInput.max = '1.2';
-  edgeInput.step = '0.05';
-  edgeInput.value = String(config.edgeMaskStrength);
-  edgeInput.style.cssText = 'width: 100%;';
-  const edgeValue = document.createElement('span');
-  edgeValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  edgeValue.textContent = config.edgeMaskStrength === 0 ? 'Off' : `${config.edgeMaskStrength.toFixed(2)}×`;
-  edgeWrap.appendChild(edgeLabel);
-  edgeWrap.appendChild(edgeInput);
-  edgeWrap.appendChild(edgeValue);
-  edgeInput.addEventListener('input', () => {
-    config.edgeMaskStrength = Number(edgeInput.value);
-    edgeValue.textContent = config.edgeMaskStrength === 0 ? 'Off' : `${config.edgeMaskStrength.toFixed(2)}×`;
-    drawPreview();
-  });
-  controlsGrid.appendChild(edgeWrap);
+  const brightCtrl = addRangeControl(
+    'Brightness',
+    0.25,
+    3,
+    0.05,
+    config.brightness,
+    (v) => `${v.toFixed(2)}×`,
+    (v) => { config.brightness = v; }
+  );
+  controlsGrid.appendChild(brightCtrl.wrap);
 
-  // Source saturation (before mask)
-  const satWrap = document.createElement('div');
-  satWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const satLabel = document.createElement('label');
-  satLabel.textContent = 'Saturation';
-  satLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const satInput = document.createElement('input');
-  satInput.type = 'range';
-  satInput.min = '0.5';
-  satInput.max = '1.6';
-  satInput.step = '0.05';
-  satInput.value = String(config.sourceSaturation);
-  satInput.style.cssText = 'width: 100%;';
-  const satValue = document.createElement('span');
-  satValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  satValue.textContent = `${Number(satInput.value).toFixed(2)}×`;
-  satWrap.appendChild(satLabel);
-  satWrap.appendChild(satInput);
-  satWrap.appendChild(satValue);
-  satInput.addEventListener('input', () => {
-    config.sourceSaturation = Number(satInput.value);
-    satValue.textContent = `${config.sourceSaturation.toFixed(2)}×`;
-    drawPreview();
-  });
-  controlsGrid.appendChild(satWrap);
+  const contrastCtrl = addRangeControl(
+    'Contrast',
+    0.25,
+    3,
+    0.01,
+    config.contrast,
+    (v) => `${v.toFixed(2)}×`,
+    (v) => { config.contrast = v; }
+  );
+  controlsGrid.appendChild(contrastCtrl.wrap);
 
-  // Inner shadow on stripes
-  const ishWrap = document.createElement('div');
-  ishWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const ishLabel = document.createElement('label');
-  ishLabel.textContent = 'Stripe depth';
-  ishLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const ishInput = document.createElement('input');
-  ishInput.type = 'range';
-  ishInput.min = '0';
-  ishInput.max = '1';
-  ishInput.step = '0.05';
-  ishInput.value = String(config.stripeInnerShadow);
-  ishInput.style.cssText = 'width: 100%;';
-  const ishValue = document.createElement('span');
-  ishValue.style.cssText = 'font-family: \'Fragment Mono\', monospace; font-size: 8pt; color: var(--fg); opacity: 0.6;';
-  ishValue.textContent = config.stripeInnerShadow === 0 ? 'Off' : `${Math.round(config.stripeInnerShadow * 100)}%`;
-  ishWrap.appendChild(ishLabel);
-  ishWrap.appendChild(ishInput);
-  ishWrap.appendChild(ishValue);
-  ishInput.addEventListener('input', () => {
-    config.stripeInnerShadow = Number(ishInput.value);
-    ishValue.textContent = config.stripeInnerShadow === 0 ? 'Off' : `${Math.round(config.stripeInnerShadow * 100)}%`;
+  const cellCtrl = addRangeControl(
+    'Scale',
+    2,
+    MAX_CELL_SIZE_PX,
+    1,
+    config.cellSize,
+    (v) => `${v}px`,
+    (v) => { config.cellSize = v; }
+  );
+  controlsGrid.appendChild(cellCtrl.wrap);
+
+  const smoothCtrl = addRangeControl(
+    'Colour smooth',
+    0,
+    10,
+    1,
+    config.halftoneSmooth,
+    (v) => (v === 0 ? 'Off' : String(v)),
+    (v) => { config.halftoneSmooth = v; }
+  );
+  controlsGrid.appendChild(smoothCtrl.wrap);
+
+  const grainCtrl = addRangeControl(
+    'Grain',
+    0,
+    0.25,
+    0.01,
+    config.noiseAmount,
+    (v) => (v === 0 ? 'Off' : `${Math.round(v * 100)}%`),
+    (v) => { config.noiseAmount = v; }
+  );
+  controlsGrid.appendChild(grainCtrl.wrap);
+
+  const stepsCtrl = addRangeControl(
+    'Steps',
+    2,
+    32,
+    1,
+    config.steps,
+    (v) => String(v),
+    (v) => { config.steps = v; }
+  );
+  controlsGrid.appendChild(stepsCtrl.wrap);
+
+  const paperRow = document.createElement('div');
+  paperRow.style.cssText = 'display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin-top: 8px;';
+  const paperWrap = document.createElement('div');
+  paperWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+  const paperLabel = document.createElement('label');
+  paperLabel.textContent = 'Paper colour';
+  paperLabel.style.cssText = LABEL_STYLE + ' display: block;';
+  const paperColorInput = document.createElement('input');
+  paperColorInput.type = 'color';
+  paperColorInput.value = config.paperColor;
+  paperColorInput.style.cssText = 'width: 56px; height: 36px; border: none; border-radius: 6px; cursor: pointer; padding: 0;';
+  paperColorInput.addEventListener('input', () => {
+    config.paperColor = paperColorInput.value;
     drawPreview();
   });
-  controlsGrid.appendChild(ishWrap);
+  paperWrap.append(paperLabel, paperColorInput);
+  paperRow.appendChild(paperWrap);
 
   effectSection.appendChild(controlsGrid);
-
-  // Full colour is always enabled; only background (gap) color is configurable.
-  const paletteRow = document.createElement('div');
-  paletteRow.style.cssText = 'display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; margin-top: 8px;';
-  const shadowWrap = document.createElement('div');
-  shadowWrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-  const shadowLabel = document.createElement('label');
-  shadowLabel.textContent = 'Background';
-  shadowLabel.style.cssText = LABEL_STYLE + ' display: block;';
-  const shadowColor = document.createElement('input');
-  shadowColor.type = 'color';
-  shadowColor.value = config.colorShadow;
-  shadowColor.style.cssText = 'width: 56px; height: 36px; border: none; border-radius: 6px; cursor: pointer; padding: 0;';
-  shadowWrap.appendChild(shadowLabel);
-  shadowWrap.appendChild(shadowColor);
-  paletteRow.appendChild(shadowWrap);
-  shadowLabel.textContent = 'Background (gaps)';
-
-  shadowColor.addEventListener('input', () => {
-    config.colorShadow = shadowColor.value;
-    drawPreview();
-  });
-  effectSection.appendChild(paletteRow);
+  effectSection.appendChild(paperRow);
 
   imageEffectPanel.appendChild(effectSection);
 
