@@ -40,7 +40,6 @@ interface ApiResponse<T> { data: T }
 const DEFAULT_CREATOR_API_BASE_URL = 'https://delphi-creator-api.gensyn.workers.dev';
 const MARKET_BASE_URL = 'https://app.delphi.fyi/markets';
 const MAINNET_RPC_URL = 'https://gensyn-mainnet.g.alchemy.com/public';
-const MAINNET_GATEWAY_ADDRESS = '0x4e4e85c52E0F414cc67eE88d0C649Ec81698d700' as const;
 const SEARCH_PAGE_SIZE = 12;
 
 const GENSYN_MAINNET = defineChain({
@@ -50,12 +49,10 @@ const GENSYN_MAINNET = defineChain({
   rpcUrls: { default: { http: [MAINNET_RPC_URL] } },
 });
 
-const DYNAMIC_PARIMUTUEL_GATEWAY_ABI = [
+/** Market-proxy ABI — works for both legacy and automated-settlement deployments. */
+const MARKET_SPOT_IMPLIED_PROBABILITIES_ABI = [
   {
-    inputs: [
-      { internalType: 'address', name: 'marketProxy', type: 'address' },
-      { internalType: 'uint256[]', name: 'outcomeIndices', type: 'uint256[]' },
-    ],
+    inputs: [{ internalType: 'uint256[]', name: 'outcomeIndices', type: 'uint256[]' }],
     name: 'spotImpliedProbabilities',
     outputs: [{ internalType: 'uint256[]', name: '', type: 'uint256[]' }],
     stateMutability: 'view',
@@ -146,11 +143,13 @@ function getChainReader(): ReturnType<typeof createPublicClient> {
 async function fetchOnChainImpliedProbabilities(marketAddress: string, outcomeCount: number): Promise<number[]> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(marketAddress) || outcomeCount < 1) return [];
   const indices = Array.from({ length: outcomeCount }, (_, i) => BigInt(i));
+  // Read the market proxy directly so both Delphi deployments (legacy creator-settled
+  // and automated oracle-settled) return quotes. Gateways only accept their own factory.
   const probs = await getChainReader().readContract({
-    address: MAINNET_GATEWAY_ADDRESS,
-    abi: DYNAMIC_PARIMUTUEL_GATEWAY_ABI,
+    address: marketAddress as `0x${string}`,
+    abi: MARKET_SPOT_IMPLIED_PROBABILITIES_ABI,
     functionName: 'spotImpliedProbabilities',
-    args: [marketAddress as `0x${string}`, indices],
+    args: [indices],
   });
   return normalizeProbabilities(probs);
 }
