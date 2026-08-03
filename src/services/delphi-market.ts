@@ -64,7 +64,6 @@ const DYNAMIC_PARIMUTUEL_GATEWAY_ABI = [
 ] as const;
 
 const searchCache = new Map<string, DelphiMarketSearchResult[]>();
-const marketCache = new Map<string, DelphiMarketOverlayData>();
 let chainReader: ReturnType<typeof createPublicClient> | null = null;
 
 function getCreatorApiBaseUrl(): string {
@@ -85,7 +84,12 @@ async function fetchCreatorApi<T>(path: string, query?: Record<string, string | 
       if (v !== undefined) url.searchParams.set(k, String(v));
     }
   }
-  const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+  // The worker sends no Cache-Control, so opt out explicitly rather than
+  // letting heuristic browser caching serve stale market data.
+  const res = await fetch(url.toString(), {
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Delphi creator API request failed (${res.status}): ${body || 'unknown error'}`);
@@ -192,8 +196,8 @@ export async function searchDelphiMarkets(query: string): Promise<DelphiMarketSe
 export async function getDelphiMarketOverlayData(marketId: string): Promise<DelphiMarketOverlayData> {
   const key = marketId.trim().toLowerCase();
   if (!key) throw new Error('Market ID is required.');
-  if (marketCache.has(key)) return marketCache.get(key)!;
 
+  // Deliberately uncached: probabilities move, so every overlay reads live data.
   const payload = await fetchCreatorApi<ApiResponse<CreatorApiMarket>>(
     `/markets/${encodeURIComponent(key)}`,
   );
@@ -210,7 +214,7 @@ export async function getDelphiMarketOverlayData(marketId: string): Promise<Delp
     // Keep equal-probability fallback when the chain read is unavailable.
   }
 
-  const overlay: DelphiMarketOverlayData = {
+  return {
     id: detail.marketAddress,
     title: detail.question?.trim() || detail.marketAddress,
     url: `${MARKET_BASE_URL}/${encodeURIComponent(detail.marketAddress)}`,
@@ -218,6 +222,4 @@ export async function getDelphiMarketOverlayData(marketId: string): Promise<Delp
     status: detail.status,
     sentiment,
   };
-  marketCache.set(key, overlay);
-  return overlay;
 }
