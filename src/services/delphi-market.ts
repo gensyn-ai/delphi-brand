@@ -39,7 +39,7 @@ interface ApiResponse<T> { data: T }
 
 const DEFAULT_CREATOR_API_BASE_URL = 'https://delphi-creator-api.gensyn.workers.dev';
 const MARKET_BASE_URL = 'https://app.delphi.fyi/markets';
-const MAINNET_RPC_URL = 'https://gensyn-mainnet.g.alchemy.com/public';
+const MAINNET_RPC_URL = 'https://rpc-gensyn-mainnet.t.conduit.xyz';
 const SEARCH_PAGE_SIZE = 12;
 
 const GENSYN_MAINNET = defineChain({
